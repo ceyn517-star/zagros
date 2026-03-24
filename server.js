@@ -29,6 +29,16 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 function autoLoadLastSQL() {
   try {
     if (fs.existsSync(LAST_SQL)) {
+      // Bellek taşmasını önlemek için dosya boyutu kontrolü (max 50MB)
+      const stats = fs.statSync(LAST_SQL);
+      const fileSizeMB = stats.size / (1024 * 1024);
+      
+      if (fileSizeMB > 50) {
+        console.log(`Auto-load skipped: File too large (${fileSizeMB.toFixed(2)}MB > 50MB limit)`);
+        jsDb = {};
+        return;
+      }
+      
       const content = fs.readFileSync(LAST_SQL, 'utf8');
       jsDb = parseDump(content);
       const tableNames = Object.keys(jsDb);
