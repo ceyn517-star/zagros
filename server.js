@@ -24,6 +24,25 @@ const DATA_DIR = path.join(__dirname, 'data');
 const LAST_SQL = path.join(DATA_DIR, 'last.sql');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// ─── Auto-load last SQL on startup ─────────────────────────────────────────────────
+
+function autoLoadLastSQL() {
+  try {
+    if (fs.existsSync(LAST_SQL)) {
+      const content = fs.readFileSync(LAST_SQL, 'utf8');
+      jsDb = parseDump(content);
+      const tableNames = Object.keys(jsDb);
+      const summary = tableNames.map(t => `${t}(${jsDb[t].rows.length} satır)`).join(', ');
+      console.log('Auto-loaded last.sql:', summary);
+    }
+  } catch (error) {
+    console.error('Auto-load error:', error.message);
+  }
+}
+
+// Call auto-load on startup
+autoLoadLastSQL();
+
 // ─── Parser helpers ──────────────────────────────────────────────────────────
 
 function parseScalarValue(s) {

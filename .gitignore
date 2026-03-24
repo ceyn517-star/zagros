@@ -1,6 +1,3 @@
 node_modules/
 uploads/
-data/
-database.db
-.env
 client/node_modules
