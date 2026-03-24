@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: zagros
+    runtime: node
+    buildCommand: npm install && npm run render-build
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+    plan: free
+    healthCheckPath: /api/status
