@@ -6,7 +6,7 @@ const fs = require('fs');
 const http = require('http');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
@@ -33,8 +33,8 @@ function autoLoadLastSQL() {
       const stats = fs.statSync(LAST_SQL);
       const fileSizeMB = stats.size / (1024 * 1024);
       
-      if (fileSizeMB > 50) {
-        console.log(`Auto-load skipped: File too large (${fileSizeMB.toFixed(2)}MB > 50MB limit)`);
+      if (fileSizeMB > 200) {
+        console.log(`Auto-load skipped: File too large (${fileSizeMB.toFixed(2)}MB > 200MB limit)`);
         jsDb = {};
         return;
       }
@@ -230,8 +230,8 @@ function parseDump(content) {
         if (valIdx === -1) continue;
         const valSection = stmt.slice(valIdx + 6);
 
-        // Parse all row groups
-        const rowGroups = parseRowGroups(valSection);
+        // Parse all row groups using extractValueGroups
+        const rowGroups = extractValueGroups(valSection);
         for (const group of rowGroups) {
           const values = parseRowGroup(group);
           if (values.length === cols.length) {
@@ -252,41 +252,11 @@ function parseDump(content) {
   return db;
 }
 
-// ─── Upload endpoint ──────────────────────────────────────────────────────────
+// ─── Upload endpoint - FIRST INSTANCE DISABLED ───────────────────────────
 
-app.post('/api/upload-sql', upload.single('sqlFile'), (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-    const content = fs.readFileSync(req.file.path, 'utf8');
-    // Save for auto-load on restart
-    try { fs.writeFileSync(LAST_SQL, content, 'utf8'); } catch {}
-    fs.unlinkSync(req.file.path);
-
-    jsDb = parseDump(content);
-
-    const tableNames = Object.keys(jsDb);
-    const rowCounts = {};
-    tableNames.forEach(t => { rowCounts[t] = jsDb[t].rows.length; });
-
-    const summary = tableNames.map(t => `${t}(${jsDb[t].rows.length} satır)`).join(', ');
-    console.log('Loaded:', summary);
-
-    const totalRows = tableNames.reduce((s, t) => s + jsDb[t].rows.length, 0);
-
-    res.json({
-      success: true,
-      message: `${tableNames.length} tablo, ${totalRows} toplam satır yüklendi.`,
-      tables: tableNames,
-      rowCounts
-    });
-  } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({ error: error.message });
-  }
+app.post('/api/upload-sql-disabled-1', (req, res) => {
+  res.status(403).json({ error: 'Upload disabled. SQL auto-loaded on startup only.' });
 });
-
-// ─── IntelX OSINT search ─────────────────────────────────────────────────────
 
 function httpsPost(hostname, path, headers, body) {
   return new Promise((resolve, reject) => {
@@ -529,38 +499,10 @@ app.get('/api/debug', (req, res) => {
   res.json(info);
 });
 
-// ─── Upload endpoint ──────────────────────────────────────────────────────────
+// ─── Upload endpoint - DISABLED ─────────────────────────────────────────────
 
-app.post('/api/upload-sql', upload.single('sqlFile'), (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-    const content = fs.readFileSync(req.file.path, 'utf8');
-    // Save for auto-load on restart
-    try { fs.writeFileSync(LAST_SQL, content, 'utf8'); } catch {}
-    fs.unlinkSync(req.file.path);
-
-    jsDb = parseDump(content);
-
-    const tableNames = Object.keys(jsDb);
-    const rowCounts = {};
-    tableNames.forEach(t => { rowCounts[t] = jsDb[t].rows.length; });
-
-    const summary = tableNames.map(t => `${t}(${jsDb[t].rows.length} satır)`).join(', ');
-    console.log('Loaded:', summary);
-
-    const totalRows = tableNames.reduce((s, t) => s + jsDb[t].rows.length, 0);
-
-    res.json({
-      success: true,
-      message: `${tableNames.length} tablo, ${totalRows} toplam satır yüklendi.`,
-      tables: tableNames,
-      rowCounts
-    });
-  } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({ error: error.message });
-  }
+app.post('/api/upload-sql', (req, res) => {
+  res.status(403).json({ error: 'Upload disabled. SQL auto-loaded on startup only.' });
 });
 
 // ─── DB status (for frontend auto-detect) ────────────────────────────────────
@@ -580,92 +522,39 @@ app.get('/api/tables', (req, res) => {
   res.json({ tables: Object.keys(jsDb) });
 });
 
-// ─── Global search across ALL tables ─────────────────────────────────────────
+// ─── Global search across ALL tables - DISABLED ─────────────────────────────────────────
 
 app.get('/api/search-everywhere', (req, res) => {
-  try {
-    const { value } = req.query;
-    if (!value) return res.status(400).json({ error: 'Missing value' });
-
-    const lowerVal = value.toLowerCase();
-    // Also search for base64-encoded version of the value (for encoded emails/IPs)
-    const b64Val = Buffer.from(value).toString('base64');
-    const b64ValNoPad = b64Val.replace(/=+$/, '');
-    const results = [];
-
-    for (const tableName of Object.keys(jsDb)) {
-      const table = jsDb[tableName];
-      if (!table.rows.length) continue;
-
-      const colNames = table.columns.map(c => c.name);
-      const matched = [];
-
-      for (const row of table.rows) {
-        const matchedCols = colNames.filter(col => {
-          const v = row[col];
-          if (v === null || v === undefined) return false;
-          const sv = String(v);
-          return sv.toLowerCase().includes(lowerVal) ||
-                 sv.includes(b64Val) ||
-                 (b64ValNoPad.length > 4 && sv.includes(b64ValNoPad));
-        });
-        if (matchedCols.length > 0) {
-          matched.push({ row, matchedCols });
-        }
-      }
-
-      if (matched.length > 0) {
-        results.push({
-          table: tableName,
-          columns: table.columns,
-          matches: matched.slice(0, 200),
-          total: matched.length
-        });
-      }
-    }
-
-    results.sort((a, b) => b.total - a.total);
-
-    const totalMatches = results.reduce((s, r) => s + r.total, 0);
-
-    // When 0 results: send sample rows so user can inspect actual data
-    let sampleData = null;
-    if (totalMatches === 0) {
-      sampleData = {};
-      for (const tableName of Object.keys(jsDb)) {
-        const tbl = jsDb[tableName];
-        if (!tbl.rows.length) continue;
-        sampleData[tableName] = {
-          columns: tbl.columns.map(c => c.name),
-          sample: tbl.rows.slice(0, 3)
-        };
-      }
-    }
-
-    res.json({
-      value,
-      tableCount: results.length,
-      totalMatches,
-      results,
-      sampleData
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  res.status(403).json({ error: 'Global search disabled. Use table-specific ID search only.' });
 });
 
-// ─── Search all columns (ID Sorgu) ───────────────────────────────────────────
+// ─── Search all columns (ID Sorgu) - LIMITED to max 5 results ───────────────────
 
 app.get('/api/table/:tableName/search-all', (req, res) => {
   try {
     const { tableName } = req.params;
-    const { value, columns } = req.query;
+    const { value, id } = req.query;
+    const searchValue = value || id;
     if (!jsDb[tableName]) return res.status(404).json({ error: 'Table not found' });
-    if (!value) return res.status(400).json({ error: 'Missing value' });
+    if (!searchValue) return res.status(400).json({ error: 'Missing id or value parameter' });
 
-    const colList = columns ? columns.split(',').map(c => c.trim()).filter(Boolean) : [];
-    const searchCols = colList.length > 0 ? colList : jsDb[tableName].columns.map(c => c.name);
-    const lowerVal = value.toLowerCase();
+    // Security: limit search to specific ID-like columns if 'id' parameter used
+    let searchCols;
+    if (id) {
+      // Only search columns that likely contain IDs
+      const allCols = jsDb[tableName].columns.map(c => c.name);
+      const idLikeCols = allCols.filter(c => 
+        c.toLowerCase().includes('id') || 
+        c.toLowerCase().includes('user') ||
+        c.toLowerCase().includes('discord') ||
+        c.toLowerCase().includes('email')
+      );
+      searchCols = idLikeCols.length > 0 ? idLikeCols : allCols.slice(0, 3);
+    } else {
+      searchCols = jsDb[tableName].columns.map(c => c.name).slice(0, 5);
+    }
+    
+    const lowerVal = searchValue.toLowerCase();
 
     const matched = jsDb[tableName].rows.filter(row =>
       searchCols.some(col => {
@@ -675,96 +564,32 @@ app.get('/api/table/:tableName/search-all', (req, res) => {
       })
     );
 
+    // Security: max 5 results to prevent data harvesting
+    const limitedResults = matched.slice(0, 5);
+
     res.json({
-      data: matched.slice(0, 500),
+      found: limitedResults.length,
+      data: limitedResults,
       columns: jsDb[tableName].columns,
-      total: matched.length,
-      searchedColumns: searchCols
+      searchedColumns: searchCols,
+      totalInDatabase: matched.length,
+      note: 'Results limited to 5 max for security'
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// ─── Table data ───────────────────────────────────────────────────────────────
+// ─── Table data - DISABLED (no full data download) ───────────────────────────────
 
 app.get('/api/table/:tableName', (req, res) => {
-  try {
-    const { tableName } = req.params;
-    if (!jsDb[tableName]) return res.status(404).json({ error: 'Table not found' });
-
-    const { search, column, limit = 100, offset = 0 } = req.query;
-    let rows = jsDb[tableName].rows;
-
-    if (search && column) {
-      const lowerSearch = search.toLowerCase();
-      rows = rows.filter(row => {
-        const v = row[column];
-        return v !== null && v !== undefined && String(v).toLowerCase().includes(lowerSearch);
-      });
-    }
-
-    const total = rows.length;
-    const pageRows = rows.slice(parseInt(offset), parseInt(offset) + parseInt(limit));
-
-    res.json({
-      columns: jsDb[tableName].columns,
-      data: pageRows,
-      total
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  res.status(403).json({ error: 'Full table access disabled. Use /api/table/:table/search-all?id=xxx' });
 });
 
-// ─── Custom query ─────────────────────────────────────────────────────────────
+// ─── Custom query - DISABLED (no SQL queries allowed) ─────────────────────────────
 
 app.post('/api/query', (req, res) => {
-  try {
-    const { query } = req.body;
-    if (!query) return res.status(400).json({ error: 'No query provided' });
-
-    const selectMatch = query.trim().match(/SELECT\s+\*\s+FROM\s+[`"]?(\w+)[`"]?(?:\s+WHERE\s+(.+?))?(?:\s+LIMIT\s+(\d+))?$/i);
-    if (!selectMatch) return res.status(400).json({ error: 'Only simple SELECT * FROM table [WHERE col = val] [LIMIT n] queries supported' });
-
-    const tableName = selectMatch[1];
-    if (!jsDb[tableName]) return res.status(404).json({ error: `Table '${tableName}' not found` });
-
-    let rows = jsDb[tableName].rows;
-
-    if (selectMatch[2]) {
-      const whereClause = selectMatch[2].trim();
-      const condMatch = whereClause.match(/[`"]?(\w+)[`"]?\s*(=|LIKE|>|<|>=|<=|!=)\s*'?([^']*)'?/i);
-      if (condMatch) {
-        const [, col, op, val] = condMatch;
-        const lv = val.toLowerCase();
-        rows = rows.filter(row => {
-          const v = row[col];
-          if (v === null || v === undefined) return false;
-          const sv = String(v);
-          if (op === '=') return sv === val || sv.toLowerCase() === lv;
-          if (op === 'LIKE') return sv.toLowerCase().includes(lv.replace(/%/g, ''));
-          if (op === '>') return Number(v) > Number(val);
-          if (op === '<') return Number(v) < Number(val);
-          if (op === '>=') return Number(v) >= Number(val);
-          if (op === '<=') return Number(v) <= Number(val);
-          if (op === '!=') return sv !== val;
-          return false;
-        });
-      }
-    }
-
-    const limitN = selectMatch[3] ? parseInt(selectMatch[3]) : 500;
-    const data = rows.slice(0, limitN);
-
-    res.json({
-      data,
-      columns: jsDb[tableName].columns,
-      rowCount: data.length
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  res.status(403).json({ error: 'Custom queries disabled. Use ID search only.' });
 });
 
 // ─── Serve frontend ───────────────────────────────────────────────────────────
