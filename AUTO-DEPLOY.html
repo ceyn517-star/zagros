@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Zagros OSINT - Otomatik Dağıtım</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .step { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 8px; }
+        .button { background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 10px 0; }
+        .button:hover { background: #45a049; }
+        .success { color: #4CAF50; font-weight: bold; }
+        .info { color: #2196F3; }
+    </style>
+</head>
+<body>
+    <h1>🚀 Zagros OSINT Platformu - Otomatik Dağıtım</h1>
+    
+    <div class="step">
+        <h2>✅ GitHub Hazır</h2>
+        <p>Depo başarıyla güncellendi: <a href="https://github.com/ceyn517-star/zagros" target="_blank">ceyn517-star/zagros</a></p>
+    </div>
+
+    <div class="step">
+        <h2>🎯 Render Dağıtım Adımları</h2>
+        <ol>
+            <li><a href="https://dashboard.render.com/" target="_blank" class="button">Render Dashboard'ı Aç</a></li>
+            <li>"New +" → "Web Service" tıklayın</li>
+            <li>GitHub deposu seçin: <span class="info">ceyn517-star/zagros</span></li>
+            <li>Render <span class="success">render.yaml</span> dosyasını otomatik algılayacak</li>
+            <li>Plan olarak <span class="success">Free</span> seçin</li>
+            <li>"Create Web Service" tıklayın</li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>⏱️ Dağıtım Süresi</h2>
+        <p>Yaklaşık <strong>5-10 dakika</strong> içinde siteniz canlı olacak!</p>
+    </div>
+
+    <div class="step">
+        <h2>🌐 Canlı Site Adresleri</h2>
+        <p>Siteniz şu adreslerde olacak:</p>
+        <ul>
+            <li><strong>https://zagros-osint.onrender.com</strong> (Ana site)</li>
+            <li><strong>https://zagros-osint.onrender.com/api/status</strong> (API test)</li>
+        </ul>
+    </div>
+
+    <div class="step">
+        <h2>🔄 Otomatik Güncelleme</h2>
+        <p>GitHub'a push yaptığınızda site otomatik güncellenecek!</p>
+    </div>
+
+    <script>
+        // Auto-redirect to Render after 10 seconds
+        setTimeout(() => {
+            if(confirm('Render dashboard\'ını açmak ister misiniz?')) {
+                window.open('https://dashboard.render.com/', '_blank');
+            }
+        }, 10000);
+    </script>
+</body>
+</html>

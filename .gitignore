@@ -3,5 +3,4 @@ uploads/
 data/
 database.db
 .env
-client/build
 client/node_modules
