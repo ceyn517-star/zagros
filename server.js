@@ -37,6 +37,8 @@ function autoLoadLastSQL() {
     }
   } catch (error) {
     console.error('Auto-load error:', error.message);
+    // Hata durumunda boş database ile devam et
+    jsDb = {};
   }
 }
 
@@ -160,86 +162,119 @@ function preprocess(sql) {
 
 function parseDump(content) {
   const db = {};
-  const processed = preprocess(content);
-  const statements = splitStatements(processed);
+  try {
+    const processed = preprocess(content);
+    const statements = splitStatements(processed);
 
-  for (const stmt of statements) {
-    const upper = stmt.trimStart().toUpperCase();
+    for (const stmt of statements) {
+      const upper = stmt.trimStart().toUpperCase();
 
-    // ── CREATE TABLE ──
-    if (upper.startsWith('CREATE TABLE')) {
-      const nameMatch = stmt.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"]?(\w+)[`"]?\s*\(/i);
-      if (!nameMatch) continue;
-      const tableName = nameMatch[1];
-      const openParen = stmt.indexOf('(');
-      if (openParen === -1) continue;
+      // ── CREATE TABLE ──
+      if (upper.startsWith('CREATE TABLE')) {
+        const nameMatch = stmt.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"]?(\w+)[`"]?\s*\(/i);
+        if (!nameMatch) continue;
+        const tableName = nameMatch[1];
+        const openParen = stmt.indexOf('(');
+        if (openParen === -1) continue;
 
-      // Extract body between first ( and matching )
-      let depth = 0, bodyStart = openParen, bodyEnd = openParen;
-      for (let i = openParen; i < stmt.length; i++) {
-        if (stmt[i] === '(') depth++;
-        else if (stmt[i] === ')') { depth--; if (depth === 0) { bodyEnd = i; break; } }
+        // Extract body between first ( and matching )
+        let depth = 0, bodyStart = openParen, bodyEnd = openParen;
+        for (let i = openParen; i < stmt.length; i++) {
+          if (stmt[i] === '(') depth++;
+          else if (stmt[i] === ')') { depth--; if (depth === 0) { bodyEnd = i; break; } }
+        }
+        const body = stmt.slice(bodyStart + 1, bodyEnd);
+        const columns = [];
+
+        for (const line of body.split('\n')) {
+          const t = line.trim().replace(/,\s*$/, '');
+          if (!t) continue;
+          const skip = /^(PRIMARY|KEY|INDEX|UNIQUE|CONSTRAINT|CHECK|FOREIGN|\))/i.test(t);
+          if (skip) continue;
+          const colMatch = t.match(/^[`"]?(\w+)[`"]?\s+([A-Za-z]+)/);
+          if (colMatch) {
+            columns.push({ name: colMatch[1], type: colMatch[2].toUpperCase() });
+          }
+        }
+        db[tableName] = { columns, rows: [] };
       }
-      const body = stmt.slice(bodyStart + 1, bodyEnd);
-      const columns = [];
 
-      for (const line of body.split('\n')) {
-        const t = line.trim().replace(/,\s*$/, '');
-        if (!t) continue;
-        const skip = /^(PRIMARY|KEY|INDEX|UNIQUE|CONSTRAINT|CHECK|FOREIGN|\))/i.test(t);
-        if (skip) continue;
-        const colMatch = t.match(/^[`"]?(\w+)[`"]?\s+([A-Za-z]+)/);
-        if (colMatch) {
-          columns.push({ name: colMatch[1], type: colMatch[2].toUpperCase() });
+      // ── INSERT INTO ──
+      else if (upper.startsWith('INSERT INTO') || upper.startsWith('INSERT IGNORE INTO')) {
+        const nameMatch = stmt.match(/INSERT\s+(?:IGNORE\s+)?INTO\s+[`"]?(\w+)[`"]?/i);
+        if (!nameMatch) continue;
+        const tableName = nameMatch[1];
+        if (!db[tableName]) db[tableName] = { columns: [], rows: [] };
+
+        // Optional explicit column list
+        let cols = db[tableName].columns.map(c => c.name);
+        const colListMatch = stmt.match(/INSERT\s+(?:IGNORE\s+)?INTO\s+[`"]?\w+[`"]?\s*\(([^)]+)\)\s*VALUES/i);
+        if (colListMatch) {
+          cols = colListMatch[1].split(',').map(c => c.trim().replace(/`/g, '').replace(/"/g, ''));
+          if (db[tableName].columns.length === 0) {
+            db[tableName].columns = cols.map(c => ({ name: c, type: 'TEXT' }));
+          }
+        }
+
+        const valIdx = stmt.search(/\bVALUES\b/i);
+        if (valIdx === -1) continue;
+        const valSection = stmt.slice(valIdx + 6);
+
+        // Parse all row groups
+        const rowGroups = parseRowGroups(valSection);
+        for (const group of rowGroups) {
+          const values = parseRowGroup(group);
+          if (values.length === cols.length) {
+            const row = {};
+            cols.forEach((col, i) => {
+              row[col] = values[i];
+            });
+            db[tableName].rows.push(row);
+          }
         }
       }
-      db[tableName] = { columns, rows: [] };
     }
-
-    // ── INSERT INTO ──
-    else if (upper.startsWith('INSERT INTO') || upper.startsWith('INSERT IGNORE INTO')) {
-      const nameMatch = stmt.match(/INSERT\s+(?:IGNORE\s+)?INTO\s+[`"]?(\w+)[`"]?/i);
-      if (!nameMatch) continue;
-      const tableName = nameMatch[1];
-      if (!db[tableName]) db[tableName] = { columns: [], rows: [] };
-
-      // Optional explicit column list
-      let cols = db[tableName].columns.map(c => c.name);
-      const colListMatch = stmt.match(/INSERT\s+(?:IGNORE\s+)?INTO\s+[`"]?\w+[`"]?\s*\(([^)]+)\)\s*VALUES/i);
-      if (colListMatch) {
-        cols = colListMatch[1].split(',').map(c => c.trim().replace(/`/g, '').replace(/"/g, ''));
-        if (db[tableName].columns.length === 0) {
-          db[tableName].columns = cols.map(c => ({ name: c, type: 'TEXT' }));
-        }
-      }
-
-      const valIdx = stmt.search(/\bVALUES\b/i);
-      if (valIdx === -1) continue;
-      const valSection = stmt.slice(valIdx + 6);
-      const groups = extractValueGroups(valSection);
-
-      for (const group of groups) {
-        const values = parseRowGroup(group);
-        const row = {};
-        cols.forEach((col, i) => { row[col] = values[i] !== undefined ? values[i] : null; });
-        db[tableName].rows.push(row);
-      }
-    }
+  } catch (error) {
+    console.error('Parse error:', error.message);
+    // Hata durumunda boş database döndür
+    return {};
   }
-
   return db;
 }
 
-// Auto-load last SQL dump on startup
-if (fs.existsSync(LAST_SQL)) {
+// ─── Upload endpoint ──────────────────────────────────────────────────────────
+
+app.post('/api/upload-sql', upload.single('sqlFile'), (req, res) => {
   try {
-    const content = fs.readFileSync(LAST_SQL, 'utf8');
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const content = fs.readFileSync(req.file.path, 'utf8');
+    // Save for auto-load on restart
+    try { fs.writeFileSync(LAST_SQL, content, 'utf8'); } catch {}
+    fs.unlinkSync(req.file.path);
+
     jsDb = parseDump(content);
-    const names = Object.keys(jsDb);
-    const total = names.reduce((s, t) => s + jsDb[t].rows.length, 0);
-    console.log(`Auto-loaded last.sql: ${names.length} tablo, ${total} satır`);
-  } catch (e) { console.error('Auto-load failed:', e.message); }
-}
+
+    const tableNames = Object.keys(jsDb);
+    const rowCounts = {};
+    tableNames.forEach(t => { rowCounts[t] = jsDb[t].rows.length; });
+
+    const summary = tableNames.map(t => `${t}(${jsDb[t].rows.length} satır)`).join(', ');
+    console.log('Loaded:', summary);
+
+    const totalRows = tableNames.reduce((s, t) => s + jsDb[t].rows.length, 0);
+
+    res.json({
+      success: true,
+      message: `${tableNames.length} tablo, ${totalRows} toplam satır yüklendi.`,
+      tables: tableNames,
+      rowCounts
+    });
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // ─── IntelX OSINT search ─────────────────────────────────────────────────────
 
