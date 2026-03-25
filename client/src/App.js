@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Database, Upload, Search, Play, Table, Download, Fingerprint, Mail, MapPin, Wifi, User, Hash } from 'lucide-react';
+import { Database, Upload, Search, Play, Table, Download, Fingerprint, Mail, MapPin, Wifi, User, Hash, Shield, Activity } from 'lucide-react';
 import './App.css';
 
 function App() {
@@ -19,6 +19,8 @@ function App() {
   const [crtshCache, setCrtshCache] = useState({});
   const [disifyCache, setDisifyCache] = useState({});
   const [discordCache, setDiscordCache] = useState({});
+  const [emailDbCache, setEmailDbCache] = useState({});
+  const [socialCache, setSocialCache] = useState({});
   const [customQuery, setCustomQuery] = useState('');
   const [queryResult, setQueryResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -124,6 +126,28 @@ function App() {
     }
   };
 
+  const fetchSocial = async (email) => {
+    if (socialCache[email] !== undefined) return;
+    setSocialCache(prev => ({ ...prev, [email]: 'loading' }));
+    try {
+      const r = await axios.get(`${API_URL}/osint/social`, { params: { email }, timeout: 15000 });
+      setSocialCache(prev => ({ ...prev, [email]: r.data }));
+    } catch {
+      setSocialCache(prev => ({ ...prev, [email]: null }));
+    }
+  };
+
+  const fetchEmailDb = async (email) => {
+    if (emailDbCache[email] !== undefined) return;
+    setEmailDbCache(prev => ({ ...prev, [email]: 'loading' }));
+    try {
+      const r = await axios.get(`${API_URL}/osint/email-db`, { params: { email }, timeout: 10000 });
+      setEmailDbCache(prev => ({ ...prev, [email]: r.data }));
+    } catch {
+      setEmailDbCache(prev => ({ ...prev, [email]: null }));
+    }
+  };
+
   const DISCORD_ID_RE = /^\d{15,20}$/;
 
   useEffect(() => {
@@ -139,7 +163,7 @@ function App() {
           const display = dec || raw;
           const colL = col.name.toLowerCase();
           if (isIP(display)) ips.add(display);
-          if (display.includes('@') && display.includes('.')) emails.add(display);
+          if (display.includes('@') && display.includes('.')) emails.add(display.trim());
           if (DISCORD_ID_RE.test(raw) || ((colL.includes('discord') || colL === 'id' || colL.includes('uid')) && DISCORD_ID_RE.test(raw))) {
             discordIds.add(raw);
           }
@@ -152,6 +176,8 @@ function App() {
       fetchBreach(email);
       fetchCrtsh(email);
       fetchDisify(email);
+      fetchEmailDb(email);
+      fetchSocial(email);
     });
     discordIds.forEach(id => fetchDiscord(id));
   }, [idResult]); // eslint-disable-line
@@ -260,6 +286,9 @@ function App() {
     if (!idQuery.trim()) return;
     setLoading(true);
     setIdResult(null);
+    setSocialCache({});
+    setBreachCache({});
+    setEmailDbCache({});
     try {
       const response = await axios.get(`${API_URL}/search-everywhere`, {
         params: { value: idQuery.trim() }
@@ -281,20 +310,30 @@ function App() {
 
   return (
     <div className="inv-app">
-      {/* ── Top bar ── */}
-      <header className="inv-header">
-        <div className="inv-header-left">
-          <Fingerprint size={22} />
-          <span className="inv-title">Zagros</span>
+      {/* ── ZAGROS Header ── */}
+      <header className="zg-header">
+        <div className="zg-header-brand">
+          <div className="zg-logo">
+            <Shield size={26} className="zg-logo-icon" />
+            <div className="zg-logo-text">
+              <span className="zg-logo-main">ZAGROS</span>
+              <span className="zg-logo-sub">OSINT PLATFORM</span>
+            </div>
+          </div>
+          <div className="zg-operators">
+            {['Jilet Zagros','Tarık Zagros','Ceyn Zagros','İtachi Zagros','Boz Zagros'].map(op => (
+              <span key={op} className="zg-op-badge">{op}</span>
+            ))}
+          </div>
         </div>
-        <div className="inv-header-right">
+        <div className="zg-header-right">
           {tables.length > 0 && (
-            <span className="inv-db-status">
-              <Database size={14}/> {tables.length} tablo · {totalRows.toLocaleString()} kayıt
+            <span className="zg-db-pill">
+              <Database size={13}/> {tables.length} tablo · {totalRows.toLocaleString()} kayıt
             </span>
           )}
-          <label className="inv-upload-btn">
-            <Upload size={16} />
+          <label className="zg-upload-btn">
+            <Upload size={14} />
             <span>{tables.length > 0 ? 'Yeni SQL' : 'SQL Yükle'}</span>
             <input type="file" accept=".sql" onChange={handleFileUpload} hidden />
           </label>
@@ -313,15 +352,31 @@ function App() {
 
         {/* ── No DB loaded ── */}
         {tables.length === 0 && !loading && (
-          <div className="inv-welcome">
-            <Fingerprint size={72} className="inv-welcome-icon" />
-            <h2>Zagros OSINT Sorgu</h2>
-            <p>Başlamak için bir SQL dump dosyası yükleyin</p>
-            <label className="inv-welcome-upload">
-              <Upload size={20} />
-              <span>SQL Dosyası Seç</span>
+          <div className="zg-welcome">
+            <div className="zg-welcome-emblem">
+              <Shield size={64} />
+            </div>
+            <div className="zg-welcome-title">ZAGROS</div>
+            <div className="zg-welcome-subtitle">OPEN SOURCE INTELLIGENCE PLATFORM</div>
+            <p className="zg-welcome-desc">Veritabanı sorgulama, OSINT araştırma ve istihbarat analiz sistemi</p>
+            <div className="zg-welcome-team">
+              <span className="zg-welcome-team-label">OPERATÖRLER</span>
+              {['Jilet Zagros','Tarık Zagros','Ceyn Zagros','İtachi Zagros','Boz Zagros'].map(op => (
+                <span key={op} className="zg-welcome-op">{op}</span>
+              ))}
+            </div>
+            <label className="zg-welcome-upload">
+              <Upload size={18} />
+              <span>SQL Veritabanı Yükle</span>
               <input type="file" accept=".sql" onChange={handleFileUpload} hidden />
             </label>
+            <div className="zg-welcome-modules">
+              <div className="zg-module"><Activity size={14}/> Discord OSINT</div>
+              <div className="zg-module"><Shield size={14}/> Breach Detection</div>
+              <div className="zg-module"><Search size={14}/> Email OSINT</div>
+              <div className="zg-module"><MapPin size={14}/> IP Geolocation</div>
+              <div className="zg-module"><Database size={14}/> DB Search</div>
+            </div>
           </div>
         )}
 
@@ -549,6 +604,47 @@ function App() {
                                         </div>
                                       ) : null;
                                     })()}
+                                    {/* Database Records for this Email */}
+                                    {emailVal && (() => {
+                                      const edb = emailDbCache[emailVal];
+                                      if (!edb) return null;
+                                      if (edb === 'loading') return <div className="osint-scanning">💾 Veritabanı taranıyor...</div>;
+                                      if (edb.totalMatches === 0) return null;
+                                      return (
+                                        <div className="email-db-panel">
+                                          <div className="email-db-title">💾 Veritabanı Kayıtları: <strong>{edb.totalMatches}</strong> eşleşme ({edb.tableCount} tablo)</div>
+                                          {edb.results.map((tblResult, ti) => (
+                                            <div key={ti} className="email-db-table">
+                                              <div className="email-db-table-name">📊 {tblResult.table} ({tblResult.total} kayıt)</div>
+                                              <div className="email-db-records">
+                                                {tblResult.matches.slice(0, 3).map((match, mi) => {
+                                                  const row = match.row;
+                                                  const cols = tblResult.columns;
+                                                  return (
+                                                    <div key={mi} className="email-db-record">
+                                                      {cols.slice(0, 8).map(col => {
+                                                        const val = row[col.name];
+                                                        if (!val || val === '' || val === 0) return null;
+                                                        const isMatched = match.matchedCols.includes(col.name);
+                                                        return (
+                                                          <div key={col.name} className="email-db-field">
+                                                            <span className="email-db-field-name">{col.name}:</span>
+                                                            <span className={isMatched ? 'email-db-field-val matched' : 'email-db-field-val'}>
+                                                              {String(val).length > 50 ? String(val).slice(0, 50) + '...' : String(val)}
+                                                            </span>
+                                                          </div>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  );
+                                                })}
+                                                {tblResult.total > 3 && <div className="email-db-more">+{tblResult.total - 3} kayıt daha...</div>}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      );
+                                    })()}
                                     {/* Quick links */}
                                     {emailVal && (
                                       <div className="osint-links">
@@ -636,70 +732,71 @@ function App() {
                           <thead>
                             <tr>
                               <th>Email</th>
-                              <th>Doğrulama</th>
+                              <th>Kayıtlı Siteler</th>
+                              <th>Kullanıcı Adları</th>
                               <th>Sızıntı</th>
-                              <th>Breach Sayısı</th>
-                              <th>Breach Listesi</th>
-                              <th>İtibar</th>
-                              <th>Platformlar</th>
-                              <th>SSL Sertifika</th>
                             </tr>
                           </thead>
                           <tbody>
                             {[...allEmails].map(email => {
-                              const ds = disifyCache[email];
                               const br = breachCache[email];
-                              const os = osintCache[email];
-                              const ct = crtshCache[email];
-                              const dsOk = ds && ds !== 'loading';
+                              const sc = socialCache[email];
                               const brOk = br && br !== 'loading';
-                              const osOk = os && os !== 'loading';
-                              const ctOk = ct && ct !== 'loading';
+                              const scOk = sc && sc !== 'loading';
+                              const isLoading = sc === 'loading' || br === 'loading';
+
+                              // Kayıtlı siteler: social OSINT + breach
+                              const siteRows = [];
+                              if (scOk && sc.sites) {
+                                sc.sites.forEach(s => siteRows.push({ site: s.site, username: s.username, url: s.url, note: s.note }));
+                              }
+                              if (brOk && br.found) {
+                                br.breaches.forEach(b => {
+                                  if (!siteRows.find(s => s.site === b.name)) {
+                                    siteRows.push({ site: b.name, username: null, url: null, note: `Sızıntı · ${b.date}` });
+                                  }
+                                });
+                              }
+
+                              // Tüm kullanıcı adları
+                              const allUsernames = [...new Set(siteRows.filter(s => s.username).map(s => s.username))];
+
                               return (
                                 <tr key={email}>
                                   <td className="osint-td-email">{email}</td>
                                   <td>
-                                    {dsOk ? (
-                                      <span className={ds.disposable ? 'ot-bad' : 'ot-good'}>
-                                        {ds.disposable ? '⚠ Tek kullanımlık' : '✅ Gerçek'}
-                                        {ds.dns === false && ' · DNS yok'}
-                                      </span>
-                                    ) : ds === 'loading' ? '⏳' : '—'}
-                                  </td>
-                                  <td>
-                                    {brOk ? (
-                                      <span className={br.found ? 'ot-bad' : 'ot-good'}>
-                                        {br.found ? `🔴 ${br.total} sızıntı` : '🟢 Temiz'}
-                                      </span>
-                                    ) : br === 'loading' ? '⏳' : '—'}
-                                  </td>
-                                  <td>
-                                    {brOk && br.found ? br.breaches.map(b => b.name).slice(0, 5).join(', ') + (br.total > 5 ? ` +${br.total - 5}` : '') : '—'}
-                                  </td>
-                                  <td>
-                                    {brOk && br.found ? (
-                                      <div className="ot-breach-list">
-                                        {br.breaches.slice(0, 8).map((b, i) => (
-                                          <span key={i} className="ot-breach-tag">{b.name} <small>({b.date})</small></span>
+                                    {isLoading ? <span className="ot-loading">⏳ Taranıyor...</span> :
+                                     siteRows.length > 0 ? (
+                                      <div className="ot-site-rows">
+                                        {siteRows.slice(0, 20).map((s, i) => (
+                                          <div key={i} className="ot-site-row">
+                                            <span className="ot-site-name">
+                                              {s.url ? <a href={s.url} target="_blank" rel="noopener noreferrer" className="ot-site-link">{s.site}</a> : s.site}
+                                            </span>
+                                            {s.note && <span className="ot-site-note">{s.note}</span>}
+                                          </div>
                                         ))}
+                                        {siteRows.length > 20 && <span className="ot-platform-more">+{siteRows.length - 20} daha</span>}
                                       </div>
                                     ) : '—'}
                                   </td>
                                   <td>
-                                    {osOk ? (
-                                      <span className={os.suspicious ? 'ot-bad' : 'ot-good'}>
-                                        {os.suspicious ? '⚠ Şüpheli' : '✅ Güvenilir'}
-                                        {os.references > 0 && ` · ${os.references} ref`}
+                                    {isLoading ? '⏳' :
+                                     allUsernames.length > 0 ? (
+                                      <div className="ot-userinfo-list">
+                                        {allUsernames.slice(0, 6).map((u, i) => (
+                                          <span key={i} className="ot-userinfo-tag">{u}</span>
+                                        ))}
+                                        {allUsernames.length > 6 && <span className="ot-userinfo-more">+{allUsernames.length - 6}</span>}
+                                      </div>
+                                    ) : '—'}
+                                  </td>
+                                  <td>
+                                    {brOk ? (
+                                      <span className={br.found ? 'ot-bad' : 'ot-good'}>
+                                        {br.found ? `🔴 ${br.total}` : '🟢 Temiz'}
                                       </span>
-                                    ) : os === 'loading' ? '⏳' : '—'}
-                                  </td>
-                                  <td>
-                                    {osOk && os.details?.profiles?.length > 0
-                                      ? os.details.profiles.map(p => <span key={p} className="ot-platform">{p}</span>)
-                                      : '—'}
-                                  </td>
-                                  <td>
-                                    {ctOk ? (ct.total > 0 ? `${ct.total} sertifika` : '—') : ct === 'loading' ? '⏳' : '—'}
+                                    ) : br === 'loading' ? '⏳' : '—'}
                                   </td>
                                 </tr>
                               );
@@ -824,6 +921,21 @@ function App() {
           </div>
         )}
       </main>
+
+      {/* ── ZAGROS Footer ── */}
+      <footer className="zg-footer">
+        <div className="zg-footer-left">
+          <Shield size={13} />
+          <span className="zg-footer-brand">ZAGROS</span>
+          <span className="zg-footer-tagline">OSINT Intelligence Platform</span>
+        </div>
+        <div className="zg-footer-ops">
+          <span className="zg-footer-ops-label">OPS</span>
+          {['Jilet Zagros','Tarık Zagros','Ceyn Zagros','İtachi Zagros','Boz Zagros'].map((op, i) => (
+            <span key={op} className="zg-footer-op">{op}{i < 4 ? <span className="zg-footer-sep">·</span> : null}</span>
+          ))}
+        </div>
+      </footer>
     </div>
   );
 }

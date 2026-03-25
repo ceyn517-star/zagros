@@ -2,12 +2,223 @@
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
-  background: #0a0a1a;
+  background: #06080f;
   color: #e2e8f0;
 }
 
+/* ═══════════════════════════════════════════════════════
+   ZAGROS DESIGN SYSTEM
+═══════════════════════════════════════════════════════ */
+
+/* ─── Header ─── */
+.zg-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 1.75rem;
+  height: 60px;
+  background: #0b0d17;
+  border-bottom: 1px solid #171d2e;
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: 0 1px 24px rgba(0,0,0,0.6);
+}
+.zg-header-brand { display: flex; align-items: center; gap: 1.5rem; }
+.zg-logo { display: flex; align-items: center; gap: 0.65rem; }
+.zg-logo-icon { color: #7c3aed; filter: drop-shadow(0 0 8px rgba(124,58,237,0.5)); }
+.zg-logo-text { display: flex; flex-direction: column; line-height: 1; gap: 0.1rem; }
+.zg-logo-main {
+  font-size: 1.15rem; font-weight: 900; letter-spacing: 0.18em;
+  color: #ffffff;
+  text-shadow: 0 0 30px rgba(124,58,237,0.4);
+}
+.zg-logo-sub {
+  font-size: 0.44rem; letter-spacing: 0.28em; color: #3d4a6b;
+  text-transform: uppercase; font-weight: 700;
+}
+.zg-operators {
+  display: flex; align-items: center; gap: 0.25rem;
+  border-left: 1px solid #171d2e; padding-left: 1.4rem;
+}
+.zg-op-badge {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em;
+  padding: 0.12rem 0.48rem;
+  background: rgba(124,58,237,0.1);
+  border: 1px solid rgba(124,58,237,0.22);
+  color: #9b79e8; border-radius: 20px;
+  transition: all 0.15s;
+}
+.zg-op-badge:hover { background: rgba(124,58,237,0.2); color: #c4b5fd; }
+.zg-header-right { display: flex; align-items: center; gap: 0.75rem; }
+.zg-db-pill {
+  display: flex; align-items: center; gap: 0.35rem;
+  font-size: 0.7rem; color: #10b981; font-weight: 600;
+  background: rgba(16,185,129,0.07);
+  padding: 0.18rem 0.65rem; border-radius: 20px;
+  border: 1px solid rgba(16,185,129,0.18);
+}
+.zg-upload-btn {
+  display: flex; align-items: center; gap: 0.4rem; cursor: pointer;
+  font-size: 0.73rem; font-weight: 700; color: #fff;
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+  border: none; border-radius: 6px;
+  padding: 0.38rem 0.85rem; transition: all 0.15s;
+  box-shadow: 0 2px 10px rgba(124,58,237,0.3);
+  white-space: nowrap;
+}
+.zg-upload-btn:hover {
+  background: linear-gradient(135deg, #6d28d9 0%, #4c1d95 100%);
+  box-shadow: 0 3px 16px rgba(124,58,237,0.5);
+  transform: translateY(-1px);
+}
+
+/* ─── Welcome Screen ─── */
+.zg-welcome {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: calc(100vh - 60px - 48px);
+  padding: 3rem 2rem; text-align: center; gap: 1rem;
+  position: relative; overflow: hidden;
+  background: #06080f;
+}
+
+/* Animated background grid */
+.zg-welcome::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(124,58,237,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124,58,237,0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 0%, transparent 100%);
+  pointer-events: none;
+}
+
+/* Glow orb */
+.zg-welcome::after {
+  content: '';
+  position: absolute;
+  width: 600px; height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(124,58,237,0.08) 0%, transparent 70%);
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  animation: zgOrb 6s ease-in-out infinite alternate;
+}
+@keyframes zgOrb {
+  0% { transform: translate(-50%, -50%) scale(1); opacity: 0.7; }
+  100% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+}
+
+.zg-welcome > * { position: relative; z-index: 1; }
+
+.zg-welcome-emblem {
+  color: #7c3aed;
+  filter: drop-shadow(0 0 32px rgba(124,58,237,0.7));
+  animation: zgPulse 3s ease-in-out infinite;
+  margin-bottom: 0.2rem;
+}
+@keyframes zgPulse {
+  0%, 100% { filter: drop-shadow(0 0 32px rgba(124,58,237,0.7)); transform: scale(1); }
+  50% { filter: drop-shadow(0 0 56px rgba(167,139,250,0.9)); transform: scale(1.05); }
+}
+.zg-welcome-title {
+  font-size: 5.5rem; font-weight: 900; letter-spacing: 0.25em;
+  background: linear-gradient(160deg, #ffffff 0%, #e0d4ff 30%, #a78bfa 65%, #6d28d9 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; line-height: 1;
+  text-shadow: none;
+  margin-bottom: -0.2rem;
+}
+.zg-welcome-subtitle {
+  font-size: 0.6rem; letter-spacing: 0.42em; text-transform: uppercase;
+  color: #3d3560; font-weight: 800;
+  border-top: 1px solid #1a1535;
+  border-bottom: 1px solid #1a1535;
+  padding: 0.4rem 1.5rem;
+}
+.zg-welcome-desc {
+  color: #4a5080; font-size: 0.85rem; max-width: 400px; line-height: 1.6;
+}
+
+/* Team / Operators box */
+.zg-welcome-team {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem;
+  justify-content: center;
+  margin-top: 0.25rem;
+  padding: 0.65rem 1.5rem;
+  background: linear-gradient(135deg, rgba(124,58,237,0.06), rgba(91,33,182,0.03));
+  border: 1px solid rgba(124,58,237,0.18);
+  border-radius: 12px;
+  max-width: 560px; width: 100%;
+}
+.zg-welcome-team-label {
+  font-size: 0.5rem; font-weight: 900; letter-spacing: 0.3em;
+  color: #3d3560; text-transform: uppercase;
+  width: 100%; text-align: center; margin-bottom: 0.2rem;
+}
+.zg-welcome-op {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em;
+  padding: 0.2rem 0.65rem;
+  background: rgba(124,58,237,0.1);
+  border: 1px solid rgba(124,58,237,0.22);
+  color: #9b79e8; border-radius: 6px;
+  transition: all 0.15s;
+}
+.zg-welcome-op:hover { background: rgba(124,58,237,0.2); color: #c4b5fd; }
+
+/* Upload button */
+.zg-welcome-upload {
+  display: flex; align-items: center; gap: 0.65rem; cursor: pointer;
+  font-size: 0.88rem; font-weight: 800; color: #fff; letter-spacing: 0.04em;
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+  border: none; border-radius: 10px;
+  padding: 0.85rem 2.5rem; margin-top: 0.25rem;
+  transition: all 0.2s;
+  box-shadow: 0 4px 24px rgba(124,58,237,0.45), 0 0 0 1px rgba(124,58,237,0.2);
+  position: relative; overflow: hidden;
+}
+.zg-welcome-upload::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+  border-radius: 10px;
+}
+.zg-welcome-upload:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 40px rgba(124,58,237,0.6), 0 0 0 1px rgba(167,139,250,0.3);
+}
+.zg-welcome-upload:active { transform: translateY(-1px); }
+
+/* Feature modules */
+.zg-welcome-modules {
+  display: flex; flex-wrap: wrap; gap: 0.4rem;
+  justify-content: center; margin-top: 0.3rem;
+  max-width: 560px;
+}
+.zg-module {
+  display: flex; align-items: center; gap: 0.38rem;
+  font-size: 0.65rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 0.25rem 0.75rem;
+  background: rgba(13,15,28,0.8); color: #2e3654;
+  border: 1px solid #131929; border-radius: 20px;
+  backdrop-filter: blur(4px);
+}
+
+/* ─── Footer ─── */
+.zg-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 1.75rem; height: 48px;
+  background: #0b0d17;
+  border-top: 1px solid #171d2e;
+}
+.zg-footer-left { display: flex; align-items: center; gap: 0.5rem; color: #3d4a6b; }
+.zg-footer-brand { font-size: 0.7rem; font-weight: 900; letter-spacing: 0.18em; color: #4a3f7a; }
+.zg-footer-tagline { font-size: 0.62rem; color: #252d45; letter-spacing: 0.06em; }
+.zg-footer-ops { display: flex; align-items: center; gap: 0.35rem; }
+.zg-footer-ops-label { font-size: 0.55rem; font-weight: 800; letter-spacing: 0.2em; color: #252d45; margin-right: 0.2rem; }
+.zg-footer-op { font-size: 0.65rem; color: #3d4a6b; font-weight: 600; display: flex; align-items: center; gap: 0.35rem; }
+.zg-footer-sep { color: #1e2638; }
+
 /* ═══ Investigator Layout ═══ */
-.inv-app { min-height: 100vh; background: #0a0a1a; }
+.inv-app { min-height: 100vh; background: #06080f; display: flex; flex-direction: column; }
 
 .inv-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -40,7 +251,8 @@ body {
 .inv-msg-close { background: none; border: none; color: inherit; cursor: pointer; font-size: 1rem; margin-left: auto; }
 
 .inv-main {
-  max-width: 900px; margin: 0 auto; padding: 2rem 1.5rem;
+  flex: 1;
+  max-width: 960px; width: 100%; margin: 0 auto; padding: 1.75rem 1.5rem;
 }
 .inv-loading {
   text-align: center; color: #a78bfa; font-size: 0.9rem; padding: 2rem;
@@ -1767,6 +1979,216 @@ body {
   font-size: 0.95rem;
 }
 
+/* ═══ OSINT Table Platform Tags ═══ */
+.ot-platform-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  max-width: 400px;
+}
+
+.ot-platform-tag {
+  display: inline-block;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: #60a5fa;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ═══ Site Rows ═══ */
+.ot-site-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-width: 350px;
+}
+
+.ot-site-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+}
+
+.ot-site-name {
+  font-weight: 600;
+  color: #e2e8f0;
+  white-space: nowrap;
+}
+
+.ot-site-link {
+  color: #60a5fa;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.ot-site-link:hover {
+  text-decoration: underline;
+}
+
+.ot-site-note {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.ot-loading {
+  font-size: 0.78rem;
+  color: #9ca3af;
+}
+
+/* ═══ User Info Tags ═══ */
+.ot-userinfo-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  max-width: 300px;
+}
+
+.ot-userinfo-tag {
+  display: inline-block;
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  color: #a78bfa;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ot-userinfo-more {
+  display: inline-block;
+  color: #9ca3af;
+  font-size: 0.7rem;
+  font-style: italic;
+  padding: 0.2rem 0.5rem;
+}
+
+.ot-platform-more {
+  display: inline-block;
+  color: #9ca3af;
+  font-size: 0.7rem;
+  font-style: italic;
+  padding: 0.2rem 0.5rem;
+}
+
+.ot-breach-more {
+  display: inline-block;
+  color: #9ca3af;
+  font-size: 0.7rem;
+  font-style: italic;
+  padding: 0.2rem 0.5rem;
+}
+
+.ot-google-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  background: linear-gradient(135deg, #4285f4 0%, #34a853 50%, #fbbc05 75%, #ea4335 100%);
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.ot-google-link:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(66, 133, 244, 0.4);
+}
+
+/* ═══ Email Database Panel ═══ */
+.email-db-panel {
+  margin-top: 0.75rem;
+  background: rgba(139, 92, 246, 0.05);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.email-db-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #a78bfa;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.email-db-table {
+  margin-bottom: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 0.6rem;
+}
+
+.email-db-table-name {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #c4b5fd;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid rgba(139, 92, 246, 0.2);
+}
+
+.email-db-records {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.email-db-record {
+  background: rgba(139, 92, 246, 0.05);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  border-radius: 4px;
+  padding: 0.5rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.4rem;
+}
+
+.email-db-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.email-db-field-name {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.email-db-field-val {
+  font-size: 0.8rem;
+  color: #e2e8f0;
+  word-break: break-word;
+}
+
+.email-db-field-val.matched {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.email-db-more {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  font-style: italic;
+  text-align: center;
+  padding: 0.3rem;
+}
+
 @media (max-width: 1024px) {
   .main-content {
     flex-direction: column;
@@ -1793,5 +2215,9 @@ body {
 
   .search-input, .search-select {
     width: 100%;
+  }
+  
+  .email-db-record {
+    grid-template-columns: 1fr;
   }
 }

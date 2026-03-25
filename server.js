@@ -6,7 +6,7 @@ const fs = require('fs');
 const http = require('http');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
@@ -26,28 +26,46 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // ─── Auto-load last SQL on startup ─────────────────────────────────────────────────
 
-function autoLoadLastSQL() {
+const os = require('os');
+const DESKTOP_PATH = path.join(os.homedir(), 'Desktop');
+
+function findDesktopSQL() {
   try {
-    if (fs.existsSync(LAST_SQL)) {
-      // Bellek taşmasını önlemek için dosya boyutu kontrolü (max 50MB)
-      const stats = fs.statSync(LAST_SQL);
+    const files = fs.readdirSync(DESKTOP_PATH);
+    // Önce raven ile başlayanlar, sonra tüm SQL'ler
+    const sqls = files.filter(f => f.toLowerCase().endsWith('.sql'));
+    const raven = sqls.find(f => f.toLowerCase().includes('raven'));
+    const chosen = raven || sqls[0];
+    return chosen ? path.join(DESKTOP_PATH, chosen) : null;
+  } catch { return null; }
+}
+
+function autoLoadLastSQL() {
+  // 1. Önce Desktop'taki SQL'i dene
+  const desktopSQL = findDesktopSQL();
+  const targetFile = desktopSQL || LAST_SQL;
+
+  try {
+    if (fs.existsSync(targetFile)) {
+      const stats = fs.statSync(targetFile);
       const fileSizeMB = stats.size / (1024 * 1024);
-      
       if (fileSizeMB > 200) {
         console.log(`Auto-load skipped: File too large (${fileSizeMB.toFixed(2)}MB > 200MB limit)`);
         jsDb = {};
         return;
       }
-      
-      const content = fs.readFileSync(LAST_SQL, 'utf8');
+      const content = fs.readFileSync(targetFile, 'utf8');
       jsDb = parseDump(content);
+      // Desktop dosyasını data/last.sql'e de kopyala
+      if (desktopSQL && targetFile !== LAST_SQL) {
+        fs.copyFileSync(desktopSQL, LAST_SQL);
+      }
       const tableNames = Object.keys(jsDb);
       const summary = tableNames.map(t => `${t}(${jsDb[t].rows.length} satır)`).join(', ');
-      console.log('Auto-loaded last.sql:', summary);
+      console.log(`Auto-loaded ${path.basename(targetFile)}:`, summary);
     }
   } catch (error) {
     console.error('Auto-load error:', error.message);
-    // Hata durumunda boş database ile devam et
     jsDb = {};
   }
 }
@@ -429,6 +447,246 @@ app.get('/api/osint/disify', (req, res) => {
   }).on('error', err => res.json({ error: err.message })).end();
 });
 
+// ─── Social OSINT - Google (Firebase), Gravatar, Duolingo, GitHub, Spotify ───
+
+const crypto = require('crypto');
+const socialCache = {};
+
+function httpsGetWithStatus(hostname, path, headers) {
+  return new Promise((resolve) => {
+    const req = require('https').request({ hostname, path, method: 'GET', headers }, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => resolve({ status: res.statusCode, body: d }));
+    });
+    req.on('error', () => resolve({ status: 0, body: '' }));
+    req.end();
+  });
+}
+
+function httpsHeadStatus(hostname, path, headers) {
+  return new Promise((resolve) => {
+    const req = require('https').request({ hostname, path, method: 'HEAD', headers }, (res) => {
+      res.resume(); resolve(res.statusCode);
+    });
+    req.on('error', () => resolve(0));
+    req.end();
+  });
+}
+
+app.get('/api/osint/social', async (req, res) => {
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ error: 'Missing email' });
+  if (socialCache[email]) return res.json(socialCache[email]);
+
+  const sites = [];
+  const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
+
+  // 1. Gravatar
+  const gravatarHash = crypto.createHash('md5').update(email.trim().toLowerCase()).digest('hex');
+  const gravatarStatus = await httpsHeadStatus('www.gravatar.com', `/avatar/${gravatarHash}?d=404`, { 'User-Agent': ua });
+  if (gravatarStatus === 200) {
+    sites.push({ site: 'Gravatar', username: email.split('@')[0], url: `https://gravatar.com/avatar/${gravatarHash}`, note: 'Profil mevcut' });
+  }
+
+  // 2. Auto-scan Downloads/Desktop for Epieos JSON files
+  const scanDirs = [
+    require('path').join(require('os').homedir(), 'Downloads'),
+    require('path').join(require('os').homedir(), 'Desktop')
+  ];
+  for (const dir of scanDirs) {
+    try {
+      const files = fs.readdirSync(dir).filter(f => f.startsWith('epieos_') && f.endsWith('.json'));
+      for (const file of files) {
+        try {
+          const content = JSON.parse(fs.readFileSync(require('path').join(dir, file), 'utf8'));
+          const q = content.metadata?.query || '';
+          if (q.toLowerCase() === email.toLowerCase() && content.data) {
+            // Parse Epieos format
+            const v = content.data.visitor || {};
+            if (v.google?.id) {
+              sites.push({ site: 'Google', username: email, url: `https://www.google.com/maps/contrib/${v.google.id}`, note: `Google ID: ${v.google.id}` });
+              if (v.google.services) {
+                Object.entries(v.google.services).forEach(([svc, url]) => {
+                  sites.push({ site: svc.replace(/_/g, ' '), username: email, url, note: 'Google Servisi' });
+                });
+              }
+            }
+            // Parse Holehe results if present
+            const holehe = content.data.holehe || content.data.sites || [];
+            holehe.forEach(h => {
+              if (h.exists || h.registered) {
+                sites.push({ site: h.name || h.website || h.site, username: h.username || email.split('@')[0], url: h.url || null, note: h.rateLimit ? '⚡ Rate limited' : '' });
+              }
+            });
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  // 3. GitHub email search
+  try {
+    const ghData = await httpsGet('api.github.com', `/search/users?q=${encodeURIComponent(email)}+in:email&per_page=5`, { 'User-Agent': 'OSINT-Tool/1.0', 'Accept': 'application/vnd.github.v3+json' });
+    if (ghData && ghData.items && ghData.items.length > 0) {
+      ghData.items.slice(0, 3).forEach(u => {
+        sites.push({ site: 'GitHub', username: u.login, url: u.html_url, note: 'GitHub hesabı' });
+      });
+    }
+  } catch {}
+
+  // 4. Duolingo - two-step full profile lookup
+  try {
+    const duoHeaders = {
+      'User-Agent': ua,
+      'Accept': 'application/json',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': 'https://www.duolingo.com/',
+      'Origin': 'https://www.duolingo.com',
+      'sec-ch-ua': '"Chromium";v="120", "Google Chrome";v="120"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin'
+    };
+    // Step 1: get user ID from email
+    const duoStep1 = await httpsGetWithStatus('www.duolingo.com', `/2017-06-30/users?email=${encodeURIComponent(email)}&fields=id,username,name,learning_language,site_streak,total_xp,has_phone_number,email,created`, duoHeaders);
+    if (duoStep1.status === 200 && duoStep1.body) {
+      const duoData1 = JSON.parse(duoStep1.body);
+      const users = duoData1.users || [];
+      for (const u of users.slice(0, 2)) {
+        const uid = u.id;
+        let fullProfile = u;
+        // Step 2: get full profile by user ID
+        if (uid) {
+          try {
+            const duoStep2 = await httpsGetWithStatus('www.duolingo.com',
+              `/2017-06-30/users/${uid}?fields=id,username,name,bio,location,learning_language,site_streak,longest_streak,total_xp,has_phone_number,created,courses,picture`,
+              duoHeaders);
+            if (duoStep2.status === 200 && duoStep2.body) {
+              fullProfile = JSON.parse(duoStep2.body);
+            }
+          } catch {}
+        }
+        const courses = (fullProfile.courses || []).map(c => c.title || c.language_string || c.id).filter(Boolean).join(', ');
+        const note = [
+          fullProfile.name ? `Ad: ${fullProfile.name}` : null,
+          fullProfile.total_xp ? `XP: ${fullProfile.total_xp}` : null,
+          fullProfile.site_streak != null ? `Streak: ${fullProfile.site_streak}` : null,
+          courses ? `Diller: ${courses}` : null,
+          fullProfile.location ? `Konum: ${fullProfile.location}` : null,
+          fullProfile.has_phone_number ? '📱 Telefon bağlı' : null
+        ].filter(Boolean).join(' · ');
+        sites.push({
+          site: 'Duolingo',
+          username: fullProfile.username || u.username,
+          url: `https://www.duolingo.com/profile/${fullProfile.username || u.username}`,
+          note
+        });
+      }
+    }
+  } catch {}
+
+  // 5. Spotify check
+  try {
+    const spBody = `validate=1&email=${encodeURIComponent(email)}&displayname=test&password=Test1234&gender=neutral&birthday=1990-01-01`;
+    const spResult = await new Promise((resolve) => {
+      const spReq = require('https').request({
+        hostname: 'spclient.wg.spotify.com',
+        path: '/signup/public/v1/account',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': ua, 'Content-Length': Buffer.byteLength(spBody) }
+      }, (r) => {
+        let d = '';
+        r.on('data', c => d += c);
+        r.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve(null); } });
+      });
+      spReq.on('error', () => resolve(null));
+      spReq.write(spBody);
+      spReq.end();
+    });
+    if (spResult && spResult.errors && spResult.errors.email) {
+      sites.push({ site: 'Spotify', username: email.split('@')[0], url: null, note: 'E-posta kullanımda' });
+    }
+  } catch {}
+
+  // 6. Adobe check
+  try {
+    const adobeResult = await httpsGetWithStatus('auth.services.adobe.com', `/lookup/v3/users?id=${encodeURIComponent(email)}`, { 'User-Agent': ua, 'Accept': 'application/json', 'X-IMS-ClientId': 'adobeio-app' });
+    if (adobeResult.status === 200) {
+      try {
+        const adobeData = JSON.parse(adobeResult.body);
+        if (adobeData.type === 'adobeID' || adobeData.account) {
+          sites.push({ site: 'Adobe', username: email.split('@')[0], url: null, note: 'Adobe hesabı mevcut' });
+        }
+      } catch {}
+    }
+  } catch {}
+
+  const out = { email, sites, total: sites.length };
+  socialCache[email] = out;
+  res.json(out);
+});
+
+// ─── Email Database Search - Find all records with this email ───────────────
+
+app.get('/api/osint/email-db', (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ error: 'Missing email' });
+
+    const lowerEmail = email.toLowerCase();
+    const results = [];
+    let totalMatches = 0;
+
+    for (const tableName of Object.keys(jsDb)) {
+      const table = jsDb[tableName];
+      if (!table.rows.length) continue;
+
+      // Find email-related columns
+      const emailCols = table.columns.filter(c => 
+        c.name.toLowerCase().includes('email') || 
+        c.name.toLowerCase().includes('mail')
+      ).map(c => c.name);
+
+      if (emailCols.length === 0) continue;
+
+      const matched = [];
+      for (const row of table.rows) {
+        const matchedCols = emailCols.filter(col => {
+          const v = row[col];
+          if (!v) return false;
+          return String(v).toLowerCase() === lowerEmail;
+        });
+
+        if (matchedCols.length > 0) {
+          matched.push({ row, matchedCols });
+          totalMatches++;
+        }
+      }
+
+      if (matched.length > 0) {
+        results.push({
+          table: tableName,
+          columns: table.columns,
+          matches: matched,
+          total: matched.length
+        });
+      }
+    }
+
+    res.json({
+      email,
+      tableCount: results.length,
+      totalMatches,
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── OSINT Email lookup (emailrep.io) ────────────────────────────────────────
 
 const https = require('https');
@@ -499,10 +757,37 @@ app.get('/api/debug', (req, res) => {
   res.json(info);
 });
 
-// ─── Upload endpoint - DISABLED ─────────────────────────────────────────────
+// ─── Upload endpoint - TEMPORARILY ENABLED ───────────────────────────────────────
 
-app.post('/api/upload-sql', (req, res) => {
-  res.status(403).json({ error: 'Upload disabled. SQL auto-loaded on startup only.' });
+app.post('/api/upload-sql', upload.single('sqlFile'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    
+    const filePath = req.file.path;
+    const sqlContent = fs.readFileSync(filePath, 'utf8');
+    
+    // Parse and load the SQL
+    const newDb = parseDump(sqlContent);
+    jsDb = newDb;
+    
+    // Save to last.sql for auto-load
+    fs.writeFileSync(LAST_SQL, sqlContent);
+    
+    const tableNames = Object.keys(jsDb);
+    const rowCounts = {};
+    tableNames.forEach(t => { rowCounts[t] = jsDb[t].rows.length; });
+    
+    // Clean up temp file
+    fs.unlinkSync(filePath);
+    
+    res.json({ 
+      message: `SQL loaded successfully! ${tableNames.length} tables, ${Object.values(rowCounts).reduce((a,b)=>a+b,0)} rows`,
+      tables: tableNames,
+      rowCounts
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // ─── DB status (for frontend auto-detect) ────────────────────────────────────
@@ -522,10 +807,131 @@ app.get('/api/tables', (req, res) => {
   res.json({ tables: Object.keys(jsDb) });
 });
 
-// ─── Global search across ALL tables - DISABLED ─────────────────────────────────────────
+// ─── Discord Webhook Logger ───────────────────────────────────────────────────
+
+const DISCORD_WEBHOOK = 'https://discord.com/api/webhooks/1486455638773989456/dqCWgUBOJZqrrL4stEOcnvt22sk8y3-RxWjP1huntXtHH6T0pHECgO29FRdjE-Ma2mOH';
+
+function sendWebhookLog(embed) {
+  try {
+    const body = JSON.stringify({ embeds: [embed] });
+    const url = new URL(DISCORD_WEBHOOK);
+    const req = require('https').request({
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+    }, (res) => { res.resume(); });
+    req.on('error', () => {});
+    req.write(body);
+    req.end();
+  } catch {}
+}
+
+// ─── Global search across ALL tables - FIXED for ID search ─────────────────────────────────────────
 
 app.get('/api/search-everywhere', (req, res) => {
-  res.status(403).json({ error: 'Global search disabled. Use table-specific ID search only.' });
+  try {
+    const { value } = req.query;
+    if (!value) return res.status(400).json({ error: 'Missing value' });
+
+    const lowerVal = value.toLowerCase();
+    const results = [];
+    let totalMatches = 0;
+
+    for (const tableName of Object.keys(jsDb)) {
+      if (totalMatches >= 5) break;
+      
+      const table = jsDb[tableName];
+      if (!table.rows.length) continue;
+
+      // Search ALL columns
+      const searchCols = table.columns.map(c => c.name);
+      const matched = [];
+
+      for (const row of table.rows) {
+        if (matched.length >= 5 - totalMatches) break;
+        
+        const matchedCols = searchCols.filter(col => {
+          const v = row[col];
+          if (v === null || v === undefined) return false;
+          const strVal = String(v);
+          // Exact match for IDs, partial for others
+          if (col.toLowerCase().includes('id')) {
+            return strVal === value || strVal.toLowerCase() === lowerVal;
+          } else {
+            return strVal.toLowerCase().includes(lowerVal);
+          }
+        });
+        
+        if (matchedCols.length > 0) {
+          matched.push({ row, matchedCols });
+        }
+      }
+
+      if (matched.length > 0) {
+        results.push({
+          table: tableName,
+          columns: table.columns,
+          matches: matched,
+          total: matched.length
+        });
+        totalMatches += matched.length;
+      }
+    }
+
+    const response = {
+      value,
+      tableCount: results.length,
+      totalMatches,
+      results,
+      note: `Found ${totalMatches} matches (max 5)`
+    };
+    res.json(response);
+
+    // ── Discord webhook log ──
+    try {
+      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+               || req.headers['x-real-ip']
+               || req.socket?.remoteAddress
+               || 'Bilinmiyor';
+
+      const now = new Date();
+      const ts = `<t:${Math.floor(now.getTime()/1000)}:F>`;
+
+      const fields = [
+        { name: '🔍 Aranan Değer', value: `\`${value}\``, inline: true },
+        { name: '🌐 IP Adresi', value: `\`${ip}\``, inline: true },
+        { name: '⏰ Zaman', value: ts, inline: true },
+        { name: '📊 Sonuç', value: totalMatches > 0 ? `**${totalMatches}** eşleşme · **${results.length}** tablo` : '❌ Sonuç bulunamadı', inline: false },
+      ];
+
+      if (totalMatches > 0) {
+        const detail = results.map(r => {
+          const preview = r.matches.slice(0, 2).map(m => {
+            const cols = Object.entries(m.row)
+              .filter(([k, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+              .slice(0, 5)
+              .map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`)
+              .join('\n');
+            return cols;
+          }).join('\n---\n');
+          return `**${r.table}** (${r.total} kayıt)\n\`\`\`\n${preview.slice(0, 800)}\n\`\`\``;
+        }).join('\n').slice(0, 2000);
+        fields.push({ name: '📋 Bulunan Veriler', value: detail, inline: false });
+      }
+
+      sendWebhookLog({
+        title: totalMatches > 0 ? '🔴 Sorgu Logu — Sonuç Bulundu' : '🟡 Sorgu Logu — Sonuç Yok',
+        color: totalMatches > 0 ? 0xe03d3d : 0xf59e0b,
+        fields,
+        footer: { text: 'Zagros OSINT Platform' },
+        timestamp: now.toISOString()
+      });
+    } catch {}
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // ─── Search all columns (ID Sorgu) - LIMITED to max 5 results ───────────────────
@@ -595,12 +1001,12 @@ app.post('/api/query', (req, res) => {
 // ─── Serve frontend ───────────────────────────────────────────────────────────
 
 app.get('*', (req, res) => {
-  const buildPath = path.join(__dirname, 'client/build', 'index.html');
-  if (fs.existsSync(buildPath)) {
-    res.sendFile(buildPath);
-  } else {
-    res.json({ message: 'API running. Frontend at http://localhost:3000' });
-  }
+const buildPath = path.join(__dirname, 'client/build', 'index.html');
+if (fs.existsSync(buildPath)) {
+res.sendFile(buildPath);
+} else {
+res.json({ message: 'API running. Frontend at http://localhost:3000' });
+}
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
