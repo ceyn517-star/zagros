@@ -32,7 +32,6 @@ const DESKTOP_PATH = path.join(os.homedir(), 'Desktop');
 function findDesktopSQL() {
   try {
     const files = fs.readdirSync(DESKTOP_PATH);
-    // Önce raven ile başlayanlar, sonra tüm SQL'ler
     const sqls = files.filter(f => f.toLowerCase().endsWith('.sql'));
     const raven = sqls.find(f => f.toLowerCase().includes('raven'));
     const chosen = raven || sqls[0];
@@ -40,8 +39,13 @@ function findDesktopSQL() {
   } catch { return null; }
 }
 
-function autoLoadLastSQL() {
-  // 1. Önce Desktop'taki SQL'i dene
+let sqlLoaded = false;
+let sqlLoading = false;
+
+function loadSQL() {
+  if (sqlLoaded || sqlLoading) return;
+  sqlLoading = true;
+  
   const desktopSQL = findDesktopSQL();
   const targetFile = desktopSQL || LAST_SQL;
 
@@ -49,29 +53,36 @@ function autoLoadLastSQL() {
     if (fs.existsSync(targetFile)) {
       const stats = fs.statSync(targetFile);
       const fileSizeMB = stats.size / (1024 * 1024);
+      console.log(`Loading SQL: ${path.basename(targetFile)} (${fileSizeMB.toFixed(1)}MB)...`);
+      
       if (fileSizeMB > 200) {
-        console.log(`Auto-load skipped: File too large (${fileSizeMB.toFixed(2)}MB > 200MB limit)`);
+        console.log('File too large, skipping');
         jsDb = {};
+        sqlLoading = false;
         return;
       }
+      
       const content = fs.readFileSync(targetFile, 'utf8');
       jsDb = parseDump(content);
-      // Desktop dosyasını data/last.sql'e de kopyala
+      
       if (desktopSQL && targetFile !== LAST_SQL) {
         fs.copyFileSync(desktopSQL, LAST_SQL);
       }
+      
       const tableNames = Object.keys(jsDb);
       const summary = tableNames.map(t => `${t}(${jsDb[t].rows.length} satır)`).join(', ');
-      console.log(`Auto-loaded ${path.basename(targetFile)}:`, summary);
+      console.log('SQL loaded:', summary);
+      sqlLoaded = true;
     }
   } catch (error) {
-    console.error('Auto-load error:', error.message);
+    console.error('SQL load error:', error.message);
     jsDb = {};
   }
+  sqlLoading = false;
 }
 
-// Call auto-load on startup
-autoLoadLastSQL();
+// Quick startup - load SQL on first request
+console.log('Server started. SQL will load on first request.');
 
 // ─── Parser helpers ──────────────────────────────────────────────────────────
 
@@ -793,8 +804,9 @@ app.post('/api/upload-sql', upload.single('sqlFile'), (req, res) => {
 // ─── DB status (for frontend auto-detect) ────────────────────────────────────
 
 app.get('/api/status', (req, res) => {
+  loadSQL(); // Lazy load
   const tableNames = Object.keys(jsDb);
-  if (tableNames.length === 0) return res.json({ loaded: false });
+  if (tableNames.length === 0) return res.json({ loaded: false, loading: sqlLoading });
   const rowCounts = {};
   tableNames.forEach(t => { rowCounts[t] = jsDb[t].rows.length; });
   res.json({ loaded: true, tables: tableNames, rowCounts });
@@ -831,6 +843,7 @@ function sendWebhookLog(embed) {
 
 app.get('/api/search-everywhere', (req, res) => {
   try {
+    loadSQL(); // Lazy load
     const { value } = req.query;
     if (!value) return res.status(400).json({ error: 'Missing value' });
 
