@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const initSqlJs = require('sql.js');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -17,8 +18,10 @@ const upload = multer({
   limits: { fileSize: 2 * 1024 * 1024 * 1024 }
 });
 
-// In-memory JS database: { tableName: { columns: [{name, type}], rows: [{}] } }
-let jsDb = {};
+// SQLite database (sql.js)
+let db = null;
+let sqlLoaded = false;
+let sqlLoading = false;
 
 const DATA_DIR = path.join(__dirname, 'data');
 const LAST_SQL = path.join(DATA_DIR, 'last.sql');
@@ -39,10 +42,7 @@ function findDesktopSQL() {
   } catch { return null; }
 }
 
-let sqlLoaded = false;
-let sqlLoading = false;
-
-function loadSQL() {
+async function loadSQL() {
   if (sqlLoaded || sqlLoading) return;
   sqlLoading = true;
   
@@ -57,26 +57,31 @@ function loadSQL() {
       
       if (fileSizeMB > 200) {
         console.log('File too large, skipping');
-        jsDb = {};
         sqlLoading = false;
         return;
       }
       
-      const content = fs.readFileSync(targetFile, 'utf8');
-      jsDb = parseDump(content);
+      const SQL = await initSqlJs();
+      const filebuffer = fs.readFileSync(targetFile);
       
-      if (desktopSQL && targetFile !== LAST_SQL) {
-        fs.copyFileSync(desktopSQL, LAST_SQL);
+      // Try loading as SQLite binary first
+      try {
+        db = new SQL.Database(filebuffer);
+        console.log('Loaded as SQLite database');
+      } catch (e) {
+        // If not SQLite, parse SQL dump
+        console.log('Parsing SQL dump...');
+        const content = filebuffer.toString('utf8');
+        db = new SQL.Database();
+        db.run(content);
+        console.log('SQL dump parsed successfully');
       }
       
-      const tableNames = Object.keys(jsDb);
-      const summary = tableNames.map(t => `${t}(${jsDb[t].rows.length} satır)`).join(', ');
-      console.log('SQL loaded:', summary);
       sqlLoaded = true;
+      console.log('Database ready');
     }
   } catch (error) {
     console.error('SQL load error:', error.message);
-    jsDb = {};
   }
   sqlLoading = false;
 }
@@ -84,7 +89,7 @@ function loadSQL() {
 // Quick startup - load SQL on first request
 console.log('Server started. SQL will load on first request.');
 
-// ─── Parser helpers ──────────────────────────────────────────────────────────
+// ─── Parser helpers (kept for compatibility) ──────────────────────────────────────────────────────────
 
 function parseScalarValue(s) {
   const t = s.trim();
