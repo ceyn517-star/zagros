@@ -831,32 +831,73 @@ app.get('/api/debug', async (req, res) => {
 
 // ─── Upload endpoint - TEMPORARILY ENABLED ───────────────────────────────────────
 
-app.post('/api/upload-sql', upload.single('sqlFile'), (req, res) => {
+app.post('/api/upload-sql', upload.single('sqlFile'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     
     const filePath = req.file.path;
-    const sqlContent = fs.readFileSync(filePath, 'utf8');
+    const fileBuffer = fs.readFileSync(filePath);
     
-    // Parse and load the SQL
-    const newDb = parseDump(sqlContent);
-    jsDb = newDb;
-    
-    // Save to last.sql for auto-load
-    fs.writeFileSync(LAST_SQL, sqlContent);
-    
-    const tableNames = Object.keys(jsDb);
-    const rowCounts = {};
-    tableNames.forEach(t => { rowCounts[t] = jsDb[t].rows.length; });
-    
-    // Clean up temp file
-    fs.unlinkSync(filePath);
-    
-    res.json({ 
-      message: `SQL loaded successfully! ${tableNames.length} tables, ${Object.values(rowCounts).reduce((a,b)=>a+b,0)} rows`,
-      tables: tableNames,
-      rowCounts
-    });
+    // Try to load as SQLite
+    try {
+      const SQL = await initSqlJs();
+      const newDb = new SQL.Database(fileBuffer);
+      db = newDb;
+      sqlLoaded = true;
+      
+      // Save to last.sql for auto-load
+      fs.copyFileSync(filePath, LAST_SQL);
+      
+      // Get table info
+      const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+      const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+      const rowCounts = {};
+      tableNames.forEach(t => {
+        const countResult = db.exec(`SELECT COUNT(*) FROM "${t}"`);
+        rowCounts[t] = countResult[0]?.values[0][0] || 0;
+      });
+      
+      // Clean up temp file
+      fs.unlinkSync(filePath);
+      
+      res.json({ 
+        message: `SQL loaded successfully! ${tableNames.length} tables, ${Object.values(rowCounts).reduce((a,b)=>a+b,0)} rows`,
+        tables: tableNames,
+        rowCounts
+      });
+    } catch (sqlError) {
+      // If not SQLite binary, try parsing as SQL dump
+      try {
+        const SQL = await initSqlJs();
+      const sqlContent = fileBuffer.toString('utf8');
+        const newDb = new SQL.Database();
+        newDb.run(sqlContent);
+        db = newDb;
+        sqlLoaded = true;
+        
+        // Save to last.sql
+        fs.writeFileSync(LAST_SQL, sqlContent);
+        
+        const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+        const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+        const rowCounts = {};
+        tableNames.forEach(t => {
+          const countResult = db.exec(`SELECT COUNT(*) FROM "${t}"`);
+          rowCounts[t] = countResult[0]?.values[0][0] || 0;
+        });
+        
+        fs.unlinkSync(filePath);
+        
+        res.json({ 
+          message: `SQL dump parsed successfully! ${tableNames.length} tables`,
+          tables: tableNames,
+          rowCounts
+        });
+      } catch (parseError) {
+        fs.unlinkSync(filePath);
+        res.status(400).json({ error: 'Invalid SQL file: ' + parseError.message });
+      }
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
