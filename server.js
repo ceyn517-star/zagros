@@ -647,8 +647,11 @@ app.get('/api/osint/social', async (req, res) => {
 
 // ─── Email Database Search - Find all records with this email ───────────────
 
-app.get('/api/osint/email-db', (req, res) => {
+app.get('/api/osint/email-db', async (req, res) => {
   try {
+    await loadSQL();
+    if (!db) return res.status(400).json({ error: 'Database not loaded' });
+    
     const { email } = req.query;
     if (!email) return res.status(400).json({ error: 'Missing email' });
 
@@ -656,47 +659,76 @@ app.get('/api/osint/email-db', (req, res) => {
     const results = [];
     let totalMatches = 0;
 
-    for (const tableName of Object.keys(jsDb)) {
-      const table = jsDb[tableName];
-      if (!table.rows.length) continue;
+    // Get all tables
+    const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+    const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
 
-      // Find email-related columns
-      const emailCols = table.columns.filter(c => 
-        c.name.toLowerCase().includes('email') || 
-        c.name.toLowerCase().includes('mail')
-      ).map(c => c.name);
+    for (const tableName of tableNames) {
+      if (totalMatches >= 5) break;
+      
+      try {
+        // Get columns
+        const colsResult = db.exec(`PRAGMA table_info("${tableName}")`);
+        const columns = colsResult[0]?.values.map(v => ({ name: v[1], type: v[2] })) || [];
+        
+        // Find email-related columns
+        const emailCols = columns.filter(c => 
+          c.name.toLowerCase().includes('email') || 
+          c.name.toLowerCase().includes('mail')
+        ).map(c => c.name);
 
-      if (emailCols.length === 0) continue;
+        if (emailCols.length === 0) continue;
 
-      const matched = [];
-      for (const row of table.rows) {
-        const matchedCols = emailCols.filter(col => {
-          const v = row[col];
-          if (!v) return false;
-          return String(v).toLowerCase() === lowerEmail;
-        });
-
-        if (matchedCols.length > 0) {
-          matched.push({ row, matchedCols });
-          totalMatches++;
+        // Build search query
+        const searchConditions = emailCols.map(col => {
+          return `LOWER("${col}") = '${lowerEmail.replace(/'/g, "''")}'`;
+        }).join(' OR ');
+        
+        const query = `SELECT * FROM "${tableName}" WHERE ${searchConditions} LIMIT 5`;
+        
+        try {
+          const rowsResult = db.exec(query);
+          if (rowsResult.length > 0 && rowsResult[0].values.length > 0) {
+            const rows = rowsResult[0].values.map(row => {
+              const obj = {};
+              rowsResult[0].columns.forEach((col, i) => {
+                obj[col] = row[i];
+              });
+              return obj;
+            });
+            
+            const matches = rows.map(row => ({
+              row,
+              matchedCols: emailCols.filter(col => {
+                const v = row[col];
+                if (!v) return false;
+                return String(v).toLowerCase() === lowerEmail;
+              })
+            }));
+            
+            if (matches.length > 0) {
+              results.push({
+                table: tableName,
+                columns,
+                matches: matches.slice(0, 5 - totalMatches),
+                total: matches.length
+              });
+              totalMatches += matches.length;
+            }
+          }
+        } catch (e) {
+          // Skip on error
         }
-      }
-
-      if (matched.length > 0) {
-        results.push({
-          table: tableName,
-          columns: table.columns,
-          matches: matched,
-          total: matched.length
-        });
+      } catch (e) {
+        // Skip this table
       }
     }
 
     res.json({
       email,
-      tableCount: results.length,
+      found: totalMatches > 0,
       totalMatches,
-      results
+      results: results.slice(0, 5)
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -761,16 +793,40 @@ app.get('/api/iplookup', (req, res) => {
 
 // ─── Debug endpoint ───────────────────────────────────────────────────────────
 
-app.get('/api/debug', (req, res) => {
-  const info = {};
-  Object.keys(jsDb).forEach(t => {
-    info[t] = {
-      columns: jsDb[t].columns.map(c => c.name),
-      rowCount: jsDb[t].rows.length,
-      sampleRow: jsDb[t].rows[0] || null
-    };
-  });
-  res.json(info);
+app.get('/api/debug', async (req, res) => {
+  await loadSQL();
+  if (!db) return res.json({ error: 'Database not loaded' });
+  
+  try {
+    const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+    const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+    
+    const info = {};
+    tableNames.forEach(t => {
+      try {
+        const colsResult = db.exec(`PRAGMA table_info("${t}")`);
+        const columns = colsResult[0]?.values.map(v => v[1]) || [];
+        
+        const countResult = db.exec(`SELECT COUNT(*) FROM "${t}"`);
+        const rowCount = countResult[0]?.values[0][0] || 0;
+        
+        const sampleResult = db.exec(`SELECT * FROM "${t}" LIMIT 1`);
+        const sampleRow = sampleResult.length > 0 && sampleResult[0].values.length > 0 ? {} : null;
+        if (sampleRow) {
+          sampleResult[0].columns.forEach((col, i) => {
+            sampleRow[col] = sampleResult[0].values[0][i];
+          });
+        }
+        
+        info[t] = { columns, rowCount, sampleRow };
+      } catch (e) {
+        info[t] = { error: e.message };
+      }
+    });
+    res.json(info);
+  } catch (error) {
+    res.json({ error: error.message });
+  }
 });
 
 // ─── Upload endpoint - TEMPORARILY ENABLED ───────────────────────────────────────
@@ -808,20 +864,43 @@ app.post('/api/upload-sql', upload.single('sqlFile'), (req, res) => {
 
 // ─── DB status (for frontend auto-detect) ────────────────────────────────────
 
-app.get('/api/status', (req, res) => {
-  loadSQL(); // Lazy load
-  const tableNames = Object.keys(jsDb);
-  if (tableNames.length === 0) return res.json({ loaded: false, loading: sqlLoading });
-  const rowCounts = {};
-  tableNames.forEach(t => { rowCounts[t] = jsDb[t].rows.length; });
-  res.json({ loaded: true, tables: tableNames, rowCounts });
+app.get('/api/status', async (req, res) => {
+  await loadSQL(); // Lazy load
+  if (!db) return res.json({ loaded: false, loading: sqlLoading });
+  
+  try {
+    // Get table names from SQLite
+    const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+    const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+    
+    if (tableNames.length === 0) return res.json({ loaded: false, loading: sqlLoading });
+    
+    const rowCounts = {};
+    tableNames.forEach(t => {
+      try {
+        const countResult = db.exec(`SELECT COUNT(*) FROM "${t}"`);
+        rowCounts[t] = countResult[0]?.values[0][0] || 0;
+      } catch { rowCounts[t] = 0; }
+    });
+    
+    res.json({ loaded: true, tables: tableNames, rowCounts });
+  } catch (error) {
+    res.json({ loaded: false, error: error.message });
+  }
 });
 
 // ─── Tables list ──────────────────────────────────────────────────────────────
 
-app.get('/api/tables', (req, res) => {
-  if (!jsDb) return res.status(400).json({ error: 'No database loaded' });
-  res.json({ tables: Object.keys(jsDb) });
+app.get('/api/tables', async (req, res) => {
+  await loadSQL();
+  if (!db) return res.status(400).json({ error: 'No database loaded' });
+  try {
+    const result = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+    const tables = result[0]?.values.map(v => v[0]) || [];
+    res.json({ tables });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // ─── Discord Webhook Logger ───────────────────────────────────────────────────
@@ -846,9 +925,11 @@ function sendWebhookLog(embed) {
 
 // ─── Global search across ALL tables - FIXED for ID search ─────────────────────────────────────────
 
-app.get('/api/search-everywhere', (req, res) => {
+app.get('/api/search-everywhere', async (req, res) => {
   try {
-    loadSQL(); // Lazy load
+    await loadSQL(); // Lazy load
+    if (!db) return res.status(400).json({ error: 'Database not loaded' });
+    
     const { value } = req.query;
     if (!value) return res.status(400).json({ error: 'Missing value' });
 
@@ -856,44 +937,73 @@ app.get('/api/search-everywhere', (req, res) => {
     const results = [];
     let totalMatches = 0;
 
-    for (const tableName of Object.keys(jsDb)) {
+    // Get all tables
+    const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+    const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+
+    for (const tableName of tableNames) {
       if (totalMatches >= 5) break;
       
-      const table = jsDb[tableName];
-      if (!table.rows.length) continue;
-
-      // Search ALL columns
-      const searchCols = table.columns.map(c => c.name);
-      const matched = [];
-
-      for (const row of table.rows) {
-        if (matched.length >= 5 - totalMatches) break;
+      try {
+        // Get columns for this table
+        const colsResult = db.exec(`PRAGMA table_info("${tableName}")`);
+        const columns = colsResult[0]?.values.map(v => ({ name: v[1], type: v[2] })) || [];
+        const colNames = columns.map(c => c.name);
         
-        const matchedCols = searchCols.filter(col => {
-          const v = row[col];
-          if (v === null || v === undefined) return false;
-          const strVal = String(v);
-          // Exact match for IDs, partial for others
-          if (col.toLowerCase().includes('id')) {
-            return strVal === value || strVal.toLowerCase() === lowerVal;
+        if (colNames.length === 0) continue;
+
+        // Build search query - search all columns
+        const searchConditions = colNames.map(col => {
+          const isIdCol = col.toLowerCase().includes('id');
+          if (isIdCol) {
+            return `"${col}" = '${value.replace(/'/g, "''")}'`;
           } else {
-            return strVal.toLowerCase().includes(lowerVal);
+            return `LOWER("${col}") LIKE '%${lowerVal.replace(/'/g, "''")}%'`;
           }
-        });
+        }).join(' OR ');
         
-        if (matchedCols.length > 0) {
-          matched.push({ row, matchedCols });
+        const query = `SELECT * FROM "${tableName}" WHERE ${searchConditions} LIMIT 5`;
+        
+        try {
+          const rowsResult = db.exec(query);
+          if (rowsResult.length > 0 && rowsResult[0].values.length > 0) {
+            const rows = rowsResult[0].values.map(row => {
+              const obj = {};
+              rowsResult[0].columns.forEach((col, i) => {
+                obj[col] = row[i];
+              });
+              return obj;
+            });
+            
+            const matches = rows.map(row => ({
+              row,
+              matchedCols: colNames.filter(col => {
+                const v = row[col];
+                if (v === null || v === undefined) return false;
+                const strVal = String(v);
+                if (col.toLowerCase().includes('id')) {
+                  return strVal === value || strVal.toLowerCase() === lowerVal;
+                } else {
+                  return strVal.toLowerCase().includes(lowerVal);
+                }
+              })
+            }));
+            
+            if (matches.length > 0) {
+              results.push({
+                table: tableName,
+                columns,
+                matches: matches.slice(0, 5 - totalMatches),
+                total: matches.length
+              });
+              totalMatches += matches.length;
+            }
+          }
+        } catch (e) {
+          // Table might not exist or query error, skip
         }
-      }
-
-      if (matched.length > 0) {
-        results.push({
-          table: tableName,
-          columns: table.columns,
-          matches: matched,
-          total: matched.length
-        });
-        totalMatches += matched.length;
+      } catch (e) {
+        // Skip this table on error
       }
     }
 
@@ -954,19 +1064,31 @@ app.get('/api/search-everywhere', (req, res) => {
 
 // ─── Search all columns (ID Sorgu) - LIMITED to max 5 results ───────────────────
 
-app.get('/api/table/:tableName/search-all', (req, res) => {
+app.get('/api/table/:tableName/search-all', async (req, res) => {
   try {
+    await loadSQL();
+    if (!db) return res.status(400).json({ error: 'Database not loaded' });
+    
     const { tableName } = req.params;
     const { value, id } = req.query;
     const searchValue = value || id;
-    if (!jsDb[tableName]) return res.status(404).json({ error: 'Table not found' });
+    
+    // Check table exists
+    const tableCheck = db.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`);
+    if (!tableCheck.length || !tableCheck[0].values.length) {
+      return res.status(404).json({ error: 'Table not found' });
+    }
+    
     if (!searchValue) return res.status(400).json({ error: 'Missing id or value parameter' });
 
+    // Get columns
+    const colsResult = db.exec(`PRAGMA table_info("${tableName}")`);
+    const columns = colsResult[0]?.values.map(v => ({ name: v[1], type: v[2] })) || [];
+    const allCols = columns.map(c => c.name);
+    
     // Security: limit search to specific ID-like columns if 'id' parameter used
     let searchCols;
     if (id) {
-      // Only search columns that likely contain IDs
-      const allCols = jsDb[tableName].columns.map(c => c.name);
       const idLikeCols = allCols.filter(c => 
         c.toLowerCase().includes('id') || 
         c.toLowerCase().includes('user') ||
@@ -975,26 +1097,35 @@ app.get('/api/table/:tableName/search-all', (req, res) => {
       );
       searchCols = idLikeCols.length > 0 ? idLikeCols : allCols.slice(0, 3);
     } else {
-      searchCols = jsDb[tableName].columns.map(c => c.name).slice(0, 5);
+      searchCols = allCols.slice(0, 5);
     }
     
     const lowerVal = searchValue.toLowerCase();
 
-    const matched = jsDb[tableName].rows.filter(row =>
-      searchCols.some(col => {
-        const v = row[col];
-        if (v === null || v === undefined) return false;
-        return String(v).toLowerCase().includes(lowerVal);
-      })
-    );
-
-    // Security: max 5 results to prevent data harvesting
-    const limitedResults = matched.slice(0, 5);
+    // Build search query
+    const searchConditions = searchCols.map(col => {
+      return `LOWER("${col}") LIKE '%${lowerVal.replace(/'/g, "''")}%'`;
+    }).join(' OR ');
+    
+    const query = `SELECT * FROM "${tableName}" WHERE ${searchConditions} LIMIT 5`;
+    
+    const rowsResult = db.exec(query);
+    const matched = [];
+    
+    if (rowsResult.length > 0 && rowsResult[0].values.length > 0) {
+      rowsResult[0].values.forEach(row => {
+        const obj = {};
+        rowsResult[0].columns.forEach((col, i) => {
+          obj[col] = row[i];
+        });
+        matched.push(obj);
+      });
+    }
 
     res.json({
-      found: limitedResults.length,
-      data: limitedResults,
-      columns: jsDb[tableName].columns,
+      found: matched.length,
+      data: matched,
+      columns,
       searchedColumns: searchCols,
       totalInDatabase: matched.length,
       note: 'Results limited to 5 max for security'
