@@ -1,10 +1,15 @@
 services:
   - type: web
-    name: zagros-osint
+    name: zagros-checker
     env: node
-    buildCommand: npm run render-build
-    startCommand: npm start
+    runtime: node
+    plan: free
+    buildCommand: npm install && cd client && npm install && npm run build && cd ..
+    startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
-    plan: free
+      - key: PORT
+        value: 10000
+    healthCheckPath: /
+    autoDeploy: true
