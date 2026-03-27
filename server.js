@@ -4,7 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const initSqlJs = require('sql.js');
+const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -18,13 +18,14 @@ const upload = multer({
   limits: { fileSize: 2 * 1024 * 1024 * 1024 }
 });
 
-// SQLite database (sql.js)
+// SQLite database (sqlite3)
 let db = null;
 let sqlLoaded = false;
 let sqlLoading = false;
 
 const DATA_DIR = path.join(__dirname, 'data');
 const LAST_SQL = path.join(DATA_DIR, 'last.sql');
+const DB_FILE = path.join(DATA_DIR, 'database.db');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // ─── Auto-load last SQL on startup ─────────────────────────────────────────────────
@@ -42,6 +43,37 @@ function findDesktopSQL() {
   } catch { return null; }
 }
 
+// Helper to run SQL as promise
+function runSql(sql) {
+  return new Promise((resolve, reject) => {
+    if (!db) return reject(new Error('Database not loaded'));
+    db.exec(sql, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+function allSql(sql) {
+  return new Promise((resolve, reject) => {
+    if (!db) return reject(new Error('Database not loaded'));
+    db.all(sql, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
+    });
+  });
+}
+
+function getSql(sql) {
+  return new Promise((resolve, reject) => {
+    if (!db) return reject(new Error('Database not loaded'));
+    db.get(sql, (err, row) => {
+      if (err) reject(err);
+      else resolve(row);
+    });
+  });
+}
+
 async function loadSQL() {
   if (sqlLoaded || sqlLoading) return;
   sqlLoading = true;
@@ -55,60 +87,26 @@ async function loadSQL() {
       const fileSizeMB = stats.size / (1024 * 1024);
       console.log(`Loading SQL: ${path.basename(targetFile)} (${fileSizeMB.toFixed(1)}MB)...`);
       
-      const SQL = await initSqlJs();
+      // Remove old DB file
+      if (fs.existsSync(DB_FILE)) {
+        fs.unlinkSync(DB_FILE);
+      }
       
-      // Read file in chunks to avoid memory issues
+      // Create new database file
+      db = new sqlite3.Database(DB_FILE);
+      
+      // Read SQL content
       const content = fs.readFileSync(targetFile, 'utf8');
       
-      // For large files, process in chunks
-      if (fileSizeMB > 50) {
-        console.log('Large file detected, using chunked loading...');
-        try {
-          const newDb = new SQL.Database();
-          
-          // Split into statements and process in batches
-          const statements = content.split(';');
-          const batchSize = 500; // Process 500 statements at a time
-          let executed = 0;
-          
-          for (let i = 0; i < statements.length; i += batchSize) {
-            const batch = statements.slice(i, i + batchSize).join(';');
-            if (batch.trim()) {
-              try {
-                newDb.run(batch + ';');
-                executed += batchSize;
-                if (executed % 1000 === 0) {
-                  console.log(`Executed ${Math.min(executed, statements.length)}/${statements.length} statements...`);
-                }
-              } catch (e) {
-                // Skip individual batch errors
-              }
-            }
-          }
-          
-          db = newDb;
-          sqlLoaded = true;
-          console.log(`Database loaded: ${executed} statements executed`);
-        } catch (sqlError) {
-          console.error('Chunked SQL parse error:', sqlError.message);
-          db = null;
-        }
-      } else {
-        // Small file - load normally
-        try {
-          const newDb = new SQL.Database();
-          newDb.run(content);
-          db = newDb;
-          sqlLoaded = true;
-          console.log(`Database loaded successfully`);
-        } catch (sqlError) {
-          console.error('SQL parse error:', sqlError.message);
-          db = null;
-        }
-      }
+      // Execute SQL statements
+      await runSql(content);
+      
+      sqlLoaded = true;
+      console.log(`Database loaded successfully`);
     }
   } catch (error) {
     console.error('SQL load error:', error.message);
+    db = null;
   }
   sqlLoading = false;
 }
@@ -687,16 +685,16 @@ app.get('/api/osint/email-db', async (req, res) => {
     let totalMatches = 0;
 
     // Get all tables
-    const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
-    const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+    const tablesResult = await allSql("SELECT name FROM sqlite_master WHERE type='table'");
+    const tableNames = tablesResult.map(r => r.name);
 
     for (const tableName of tableNames) {
       if (totalMatches >= 5) break;
       
       try {
         // Get columns
-        const colsResult = db.exec(`PRAGMA table_info("${tableName}")`);
-        const columns = colsResult[0]?.values.map(v => ({ name: v[1], type: v[2] })) || [];
+        const colsResult = await allSql(`PRAGMA table_info("${tableName}")`);
+        const columns = colsResult.map(r => ({ name: r.name, type: r.type }));
         
         // Find email-related columns
         const emailCols = columns.filter(c => 
@@ -714,16 +712,8 @@ app.get('/api/osint/email-db', async (req, res) => {
         const query = `SELECT * FROM "${tableName}" WHERE ${searchConditions} LIMIT 5`;
         
         try {
-          const rowsResult = db.exec(query);
-          if (rowsResult.length > 0 && rowsResult[0].values.length > 0) {
-            const rows = rowsResult[0].values.map(row => {
-              const obj = {};
-              rowsResult[0].columns.forEach((col, i) => {
-                obj[col] = row[i];
-              });
-              return obj;
-            });
-            
+          const rows = await allSql(query);
+          if (rows.length > 0) {
             const matches = rows.map(row => ({
               row,
               matchedCols: emailCols.filter(col => {
@@ -825,31 +815,25 @@ app.get('/api/debug', async (req, res) => {
   if (!db) return res.json({ error: 'Database not loaded' });
   
   try {
-    const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
-    const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+    const tableNames = await allSql("SELECT name FROM sqlite_master WHERE type='table'");
+    const tableList = tableNames.map(r => r.name);
     
     const info = {};
-    tableNames.forEach(t => {
+    for (const t of tableList) {
       try {
-        const colsResult = db.exec(`PRAGMA table_info("${t}")`);
-        const columns = colsResult[0]?.values.map(v => v[1]) || [];
+        const columns = await allSql(`PRAGMA table_info("${t}")`);
+        const colNames = columns.map(r => r.name);
         
-        const countResult = db.exec(`SELECT COUNT(*) FROM "${t}"`);
-        const rowCount = countResult[0]?.values[0][0] || 0;
+        const countResult = await getSql(`SELECT COUNT(*) as count FROM "${t}"`);
+        const rowCount = countResult ? countResult.count : 0;
         
-        const sampleResult = db.exec(`SELECT * FROM "${t}" LIMIT 1`);
-        const sampleRow = sampleResult.length > 0 && sampleResult[0].values.length > 0 ? {} : null;
-        if (sampleRow) {
-          sampleResult[0].columns.forEach((col, i) => {
-            sampleRow[col] = sampleResult[0].values[0][i];
-          });
-        }
+        const sampleRow = await getSql(`SELECT * FROM "${t}" LIMIT 1`);
         
-        info[t] = { columns, rowCount, sampleRow };
+        info[t] = { columns: colNames, rowCount, sampleRow };
       } catch (e) {
         info[t] = { error: e.message };
       }
-    });
+    }
     res.json(info);
   } catch (error) {
     res.json({ error: error.message });
@@ -865,64 +849,94 @@ app.post('/api/upload-sql', upload.single('sqlFile'), async (req, res) => {
     const filePath = req.file.path;
     const fileBuffer = fs.readFileSync(filePath);
     
-    // Try to load as SQLite binary first
+    // Try loading as SQLite binary first
     try {
-      const SQL = await initSqlJs();
-      const newDb = new SQL.Database(fileBuffer);
-      db = newDb;
+      // Write buffer to temp file and try to open with sqlite3
+      const tempDbPath = path.join(DATA_DIR, 'temp_upload.db');
+      fs.writeFileSync(tempDbPath, fileBuffer);
+      
+      const newDb = new sqlite3.Database(tempDbPath);
+      
+      // Test if valid by getting tables
+      const tablesResult = await allSql.call({ db: newDb }, "SELECT name FROM sqlite_master WHERE type='table'");
+      const tableNames = tablesResult.map(r => r.name);
+      
+      // Close temp db
+      newDb.close();
+      
+      // Replace main db file
+      if (fs.existsSync(DB_FILE)) {
+        fs.unlinkSync(DB_FILE);
+      }
+      fs.copyFileSync(tempDbPath, DB_FILE);
+      fs.unlinkSync(tempDbPath);
+      
+      // Open as main db
+      db = new sqlite3.Database(DB_FILE);
       sqlLoaded = true;
       
       // Save to last.sql for auto-load
       fs.copyFileSync(filePath, LAST_SQL);
       
-      // Get table info
-      const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
-      const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+      // Get row counts
       const rowCounts = {};
-      tableNames.forEach(t => {
-        const countResult = db.exec(`SELECT COUNT(*) FROM "${t}"`);
-        rowCounts[t] = countResult[0]?.values[0][0] || 0;
-      });
+      for (const t of tableNames) {
+        try {
+          const countResult = await getSql.call({ db }, `SELECT COUNT(*) as count FROM "${t}"`);
+          rowCounts[t] = countResult ? countResult.count : 0;
+        } catch { rowCounts[t] = 0; }
+      }
       
       // Clean up temp file
       fs.unlinkSync(filePath);
       
       res.json({ 
-        message: `SQL loaded successfully! ${tableNames.length} tables, ${Object.values(rowCounts).reduce((a,b)=>a+b,0)} rows`,
+        message: `SQLite loaded successfully! ${tableNames.length} tables, ${Object.values(rowCounts).reduce((a,b)=>a+b,0)} rows`,
         tables: tableNames,
         rowCounts
       });
-    } catch (sqlError) {
-      // If not SQLite binary, try parsing as SQL dump
+    } catch (sqliteError) {
+      // Not a valid SQLite binary, try as SQL dump
       try {
-        const SQL = await initSqlJs();
         const sqlContent = fileBuffer.toString('utf8');
-        const newDb = new SQL.Database();
-        newDb.run(sqlContent);
-        db = newDb;
+        
+        // Remove old DB file
+        if (fs.existsSync(DB_FILE)) {
+          fs.unlinkSync(DB_FILE);
+        }
+        
+        // Create new database
+        db = new sqlite3.Database(DB_FILE);
+        
+        // Execute SQL content
+        await runSql.call({ db }, sqlContent);
+        
         sqlLoaded = true;
         
         // Save to last.sql
         fs.writeFileSync(LAST_SQL, sqlContent);
         
-        const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
-        const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+        // Get table info
+        const tablesResult = await allSql.call({ db }, "SELECT name FROM sqlite_master WHERE type='table'");
+        const tableNames = tablesResult.map(r => r.name);
         const rowCounts = {};
-        tableNames.forEach(t => {
-          const countResult = db.exec(`SELECT COUNT(*) FROM "${t}"`);
-          rowCounts[t] = countResult[0]?.values[0][0] || 0;
-        });
+        for (const t of tableNames) {
+          try {
+            const countResult = await getSql.call({ db }, `SELECT COUNT(*) as count FROM "${t}"`);
+            rowCounts[t] = countResult ? countResult.count : 0;
+          } catch { rowCounts[t] = 0; }
+        }
         
         fs.unlinkSync(filePath);
         
         res.json({ 
-          message: `SQL dump parsed successfully! ${tableNames.length} tables`,
+          message: `SQL dump loaded! ${tableNames.length} tables`,
           tables: tableNames,
           rowCounts
         });
-      } catch (parseError) {
+      } catch (dumpError) {
         fs.unlinkSync(filePath);
-        res.status(400).json({ error: 'Invalid SQL file: ' + parseError.message });
+        res.status(400).json({ error: 'Invalid SQL file: ' + dumpError.message });
       }
     }
   } catch (error) {
@@ -933,25 +947,24 @@ app.post('/api/upload-sql', upload.single('sqlFile'), async (req, res) => {
 // ─── DB status (for frontend auto-detect) ────────────────────────────────────
 
 app.get('/api/status', async (req, res) => {
-  await loadSQL(); // Lazy load
+  await loadSQL();
   if (!db) return res.json({ loaded: false, loading: sqlLoading });
   
   try {
-    // Get table names from SQLite
-    const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
-    const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+    const tableNames = await allSql("SELECT name FROM sqlite_master WHERE type='table'");
+    const tableList = tableNames.map(r => r.name);
     
-    if (tableNames.length === 0) return res.json({ loaded: false, loading: sqlLoading });
+    if (tableList.length === 0) return res.json({ loaded: false, loading: sqlLoading });
     
     const rowCounts = {};
-    tableNames.forEach(t => {
+    for (const t of tableList) {
       try {
-        const countResult = db.exec(`SELECT COUNT(*) FROM "${t}"`);
-        rowCounts[t] = countResult[0]?.values[0][0] || 0;
+        const countResult = await getSql(`SELECT COUNT(*) as count FROM "${t}"`);
+        rowCounts[t] = countResult ? countResult.count : 0;
       } catch { rowCounts[t] = 0; }
-    });
+    }
     
-    res.json({ loaded: true, tables: tableNames, rowCounts });
+    res.json({ loaded: true, tables: tableList, rowCounts });
   } catch (error) {
     res.json({ loaded: false, error: error.message });
   }
@@ -963,8 +976,8 @@ app.get('/api/tables', async (req, res) => {
   await loadSQL();
   if (!db) return res.status(400).json({ error: 'No database loaded' });
   try {
-    const result = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
-    const tables = result[0]?.values.map(v => v[0]) || [];
+    const result = await allSql("SELECT name FROM sqlite_master WHERE type='table'");
+    const tables = result.map(r => r.name);
     res.json({ tables });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1006,16 +1019,16 @@ app.get('/api/search-everywhere', async (req, res) => {
     let totalMatches = 0;
 
     // Get all tables
-    const tablesResult = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
-    const tableNames = tablesResult[0]?.values.map(v => v[0]) || [];
+    const tablesResult = await allSql("SELECT name FROM sqlite_master WHERE type='table'");
+    const tableNames = tablesResult.map(r => r.name);
 
     for (const tableName of tableNames) {
       if (totalMatches >= 5) break;
       
       try {
         // Get columns for this table
-        const colsResult = db.exec(`PRAGMA table_info("${tableName}")`);
-        const columns = colsResult[0]?.values.map(v => ({ name: v[1], type: v[2] })) || [];
+        const colsResult = await allSql(`PRAGMA table_info("${tableName}")`);
+        const columns = colsResult.map(r => ({ name: r.name, type: r.type }));
         const colNames = columns.map(c => c.name);
         
         if (colNames.length === 0) continue;
@@ -1033,16 +1046,8 @@ app.get('/api/search-everywhere', async (req, res) => {
         const query = `SELECT * FROM "${tableName}" WHERE ${searchConditions} LIMIT 5`;
         
         try {
-          const rowsResult = db.exec(query);
-          if (rowsResult.length > 0 && rowsResult[0].values.length > 0) {
-            const rows = rowsResult[0].values.map(row => {
-              const obj = {};
-              rowsResult[0].columns.forEach((col, i) => {
-                obj[col] = row[i];
-              });
-              return obj;
-            });
-            
+          const rows = await allSql(query);
+          if (rows.length > 0) {
             const matches = rows.map(row => ({
               row,
               matchedCols: colNames.filter(col => {
@@ -1142,8 +1147,8 @@ app.get('/api/table/:tableName/search-all', async (req, res) => {
     const searchValue = value || id;
     
     // Check table exists
-    const tableCheckResult = db.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`);
-    const tableCheck = tableCheckResult.length > 0 && tableCheckResult[0].values.length > 0 ? tableCheckResult[0].values[0][0] : null;
+    const tableCheckResult = await allSql(`SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`);
+    const tableCheck = tableCheckResult.length > 0 ? tableCheckResult[0].name : null;
     if (!tableCheck) {
       return res.status(404).json({ error: 'Table not found' });
     }
@@ -1151,8 +1156,8 @@ app.get('/api/table/:tableName/search-all', async (req, res) => {
     if (!searchValue) return res.status(400).json({ error: 'Missing id or value parameter' });
 
     // Get columns
-    const colsResult = db.exec(`PRAGMA table_info("${tableName}")`);
-    const columns = colsResult[0]?.values.map(v => ({ name: v[1], type: v[2] })) || [];
+    const colsResult = await allSql(`PRAGMA table_info("${tableName}")`);
+    const columns = colsResult.map(r => ({ name: r.name, type: r.type }));
     const allCols = columns.map(c => c.name);
     
     // Security: limit search to specific ID-like columns if 'id' parameter used
@@ -1178,18 +1183,7 @@ app.get('/api/table/:tableName/search-all', async (req, res) => {
     
     const query = `SELECT * FROM "${tableName}" WHERE ${searchConditions} LIMIT 5`;
     
-    const rowsResult = db.exec(query);
-    const matched = [];
-    
-    if (rowsResult.length > 0 && rowsResult[0].values.length > 0) {
-      rowsResult[0].values.forEach(row => {
-        const obj = {};
-        rowsResult[0].columns.forEach((col, i) => {
-          obj[col] = row[i];
-        });
-        matched.push(obj);
-      });
-    }
+    const matched = await allSql(query);
 
     res.json({
       found: matched.length,
