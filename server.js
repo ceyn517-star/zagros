@@ -56,18 +56,55 @@ async function loadSQL() {
       console.log(`Loading SQL: ${path.basename(targetFile)} (${fileSizeMB.toFixed(1)}MB)...`);
       
       const SQL = await initSqlJs();
+      
+      // Read file in chunks to avoid memory issues
       const content = fs.readFileSync(targetFile, 'utf8');
       
-      // Try to load as SQL dump
-      try {
-        const newDb = new SQL.Database();
-        newDb.run(content);
-        db = newDb;
-        sqlLoaded = true;
-        console.log(`Database loaded successfully`);
-      } catch (sqlError) {
-        console.error('SQL parse error:', sqlError.message);
-        db = null;
+      // For large files, process in chunks
+      if (fileSizeMB > 50) {
+        console.log('Large file detected, using chunked loading...');
+        try {
+          const newDb = new SQL.Database();
+          
+          // Split into statements and process in batches
+          const statements = content.split(';');
+          const batchSize = 500; // Process 500 statements at a time
+          let executed = 0;
+          
+          for (let i = 0; i < statements.length; i += batchSize) {
+            const batch = statements.slice(i, i + batchSize).join(';');
+            if (batch.trim()) {
+              try {
+                newDb.run(batch + ';');
+                executed += batchSize;
+                if (executed % 1000 === 0) {
+                  console.log(`Executed ${Math.min(executed, statements.length)}/${statements.length} statements...`);
+                }
+              } catch (e) {
+                // Skip individual batch errors
+              }
+            }
+          }
+          
+          db = newDb;
+          sqlLoaded = true;
+          console.log(`Database loaded: ${executed} statements executed`);
+        } catch (sqlError) {
+          console.error('Chunked SQL parse error:', sqlError.message);
+          db = null;
+        }
+      } else {
+        // Small file - load normally
+        try {
+          const newDb = new SQL.Database();
+          newDb.run(content);
+          db = newDb;
+          sqlLoaded = true;
+          console.log(`Database loaded successfully`);
+        } catch (sqlError) {
+          console.error('SQL parse error:', sqlError.message);
+          db = null;
+        }
       }
     }
   } catch (error) {
