@@ -332,11 +332,6 @@ function App() {
               <Database size={13}/> {tables.length} tablo · {totalRows.toLocaleString()} kayıt
             </span>
           )}
-          <label className="zg-upload-btn">
-            <Upload size={14} />
-            <span>{tables.length > 0 ? 'Yeni SQL' : 'SQL Yükle'}</span>
-            <input type="file" accept=".sql" onChange={handleFileUpload} hidden />
-          </label>
         </div>
       </header>
 
@@ -350,35 +345,18 @@ function App() {
       <main className="inv-main">
         {loading && <div className="inv-loading">Taranıyor...</div>}
 
-        {/* ── No DB loaded ── */}
-        {tables.length === 0 && !loading && (
-          <div className="zg-welcome">
-            <div className="zg-welcome-emblem">
-              <Shield size={64} />
+          {/* ── Auto-loading DB, no upload needed ── */}
+          {tables.length === 0 && !loading && (
+            <div className="zg-welcome">
+              <div className="zg-welcome-emblem">
+                <Shield size={64} />
+              </div>
+              <div className="zg-welcome-title">ZAGROS</div>
+              <div className="zg-welcome-subtitle">OPEN SOURCE INTELLIGENCE PLATFORM</div>
+              <p className="zg-welcome-desc">Veritabanı yükleniyor, lütfen bekleyin...</p>
+              <div className="inv-loading">Yükleniyor...</div>
             </div>
-            <div className="zg-welcome-title">ZAGROS</div>
-            <div className="zg-welcome-subtitle">OPEN SOURCE INTELLIGENCE PLATFORM</div>
-            <p className="zg-welcome-desc">Veritabanı sorgulama, OSINT araştırma ve istihbarat analiz sistemi</p>
-            <div className="zg-welcome-team">
-              <span className="zg-welcome-team-label">OPERATÖRLER</span>
-              {['Jilet Zagros','Tarık Zagros','Ceyn Zagros','İtachi Zagros','Boz Zagros'].map(op => (
-                <span key={op} className="zg-welcome-op">{op}</span>
-              ))}
-            </div>
-            <label className="zg-welcome-upload">
-              <Upload size={18} />
-              <span>SQL Veritabanı Yükle</span>
-              <input type="file" accept=".sql" onChange={handleFileUpload} hidden />
-            </label>
-            <div className="zg-welcome-modules">
-              <div className="zg-module"><Activity size={14}/> Discord OSINT</div>
-              <div className="zg-module"><Shield size={14}/> Breach Detection</div>
-              <div className="zg-module"><Search size={14}/> Email OSINT</div>
-              <div className="zg-module"><MapPin size={14}/> IP Geolocation</div>
-              <div className="zg-module"><Database size={14}/> DB Search</div>
-            </div>
-          </div>
-        )}
+          )}
 
         {/* ── Main query interface ── */}
         {tables.length > 0 && (
