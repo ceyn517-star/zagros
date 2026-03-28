@@ -63,17 +63,24 @@ content = content.replace(/END\/\//gi, '');
 content = content.replace(/\/\//g, '');
 
 // Split into statements and clean up
-const statements = content.split(';').map(s => s.trim()).filter(s => s.length > 0);
+const statements = content.split(';').map(s => s.trim()).filter(s => s.length > 0 && !s.match(/^\s*$/));
 
 const cleanStatements = statements.map(stmt => {
-  // Skip empty or comment-only statements
+  // Skip empty or whitespace-only statements
   if (!stmt || stmt.match(/^\s*$/)) return null;
+  
+  // Clean up the statement
+  stmt = stmt.trim();
+  
+  // Skip comment-only statements
   if (stmt.match(/^\s*--/)) return null;
+  if (stmt.match(/^\s*\/\*/)) return null;
   
   // Skip DELIMITER, PROCEDURE, and EVENT statements
   if (stmt.match(/^\s*DELIMITER/i)) return null;
   if (stmt.match(/^\s*CREATE\s+PROCEDURE/i)) return null;
   if (stmt.match(/^\s*CREATE\s+EVENT/i)) return null;
+  if (stmt.match(/^\s*CALL/i)) return null;
   
   // Clean up individual statements
   stmt = stmt
