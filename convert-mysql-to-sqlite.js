@@ -57,8 +57,10 @@ content = content
 
 // Remove DELIMITER, stored procedures, and events entirely
 content = content.replace(/DELIMITER\s+[^\n]+/gi, '');
-content = content.replace(/CREATE\s+PROCEDURE\s+[^/]+\/\/\s*DELIMITER;/gi, '');
-content = content.replace(/CREATE\s+EVENT\s+[^/]+\/\/\s*DELIMITER;/gi, '');
+content = content.replace(/CREATE\s+PROCEDURE\s+[\s\S]*?END\/\//gi, '');
+content = content.replace(/CREATE\s+EVENT\s+[\s\S]*?DELIMITER;/gi, '');
+content = content.replace(/END\/\//gi, '');
+content = content.replace(/\/\//g, '');
 
 // Split into statements and clean up
 const statements = content.split(';').map(s => s.trim()).filter(s => s.length > 0);
@@ -104,6 +106,7 @@ output = output
   .replace(/\bsmallint\b/gi, 'INTEGER')
   .replace(/\bmediumint\b/gi, 'INTEGER')
   .replace(/\bbigint\b/gi, 'INTEGER')
+  .replace(/\bbigINTEGER\b/gi, 'INTEGER')
   // Remove trailing commas before closing parenthesis in CREATE TABLE
   .replace(/,\s*\)/g, ')');
 
