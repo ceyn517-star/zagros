@@ -28,9 +28,37 @@ content = content
   // Remove MySQL index statements
   .replace(/,\s*UNIQUE\s+KEY\s+"[^"]+"\s*\([^)]+\)/gi, '')
   .replace(/,\s*KEY\s+"[^"]+"\s*\([^)]+\)/gi, '')
+  // Convert MySQL data types to SQLite
+  .replace(/int\(\d+\)/gi, 'INTEGER')
+  .replace(/tinyint\(\d+\)/gi, 'INTEGER')
+  .replace(/bigint\(\d+\)/gi, 'INTEGER')
+  .replace(/smallint\(\d+\)/gi, 'INTEGER')
+  .replace(/mediumint\(\d+\)/gi, 'INTEGER')
+  .replace(/varchar\(\d+\)/gi, 'TEXT')
+  .replace(/char\(\d+\)/gi, 'TEXT')
+  .replace(/longtext/gi, 'TEXT')
+  .replace(/mediumtext/gi, 'TEXT')
+  .replace(/tinytext/gi, 'TEXT')
+  .replace(/text\s+CHARACTER\s+SET\s+utf8mb4[^,)]*/gi, 'TEXT')
+  .replace(/longblob/gi, 'BLOB')
+  .replace(/mediumblob/gi, 'BLOB')
+  .replace(/tinyblob/gi, 'BLOB')
+  .replace(/blob/gi, 'BLOB')
+  .replace(/datetime/gi, 'TEXT')
+  .replace(/timestamp/gi, 'TEXT')
+  .replace(/date\s+NOT\s+NULL/gi, 'TEXT NOT NULL')
+  .replace(/date\s+DEFAULT/gi, 'TEXT DEFAULT')
+  .replace(/date,/gi, 'TEXT,')
+  // Remove CHECK constraints that MySQL uses
+  .replace(/CHECK\s*\([^)]+\)/gi, '')
   // Fix multiple spaces and empty lines
   .replace(/\n\s*\n/g, '\n')
   .replace(/  +/g, ' ');
+
+// Remove DELIMITER, stored procedures, and events entirely
+content = content.replace(/DELIMITER\s+[^\n]+/gi, '');
+content = content.replace(/CREATE\s+PROCEDURE\s+[^/]+\/\/\s*DELIMITER;/gi, '');
+content = content.replace(/CREATE\s+EVENT\s+[^/]+\/\/\s*DELIMITER;/gi, '');
 
 // Split into statements and clean up
 const statements = content.split(';').map(s => s.trim()).filter(s => s.length > 0);
@@ -40,11 +68,21 @@ const cleanStatements = statements.map(stmt => {
   if (!stmt || stmt.match(/^\s*$/)) return null;
   if (stmt.match(/^\s*--/)) return null;
   
+  // Skip DELIMITER, PROCEDURE, and EVENT statements
+  if (stmt.match(/^\s*DELIMITER/i)) return null;
+  if (stmt.match(/^\s*CREATE\s+PROCEDURE/i)) return null;
+  if (stmt.match(/^\s*CREATE\s+EVENT/i)) return null;
+  
   // Clean up individual statements
-  return stmt
+  stmt = stmt
     .replace(/\n\s*/g, ' ')
     .replace(/  +/g, ' ')
     .trim();
+    
+  // Remove trailing commas before closing parenthesis
+  stmt = stmt.replace(/,\s*\)/g, ')');
+  
+  return stmt;
 }).filter(s => s && s.length > 0);
 
 // Rebuild SQL content
@@ -54,7 +92,10 @@ let output = cleanStatements.join(';\n\n') + ';';
 output = output
   .replace(/\n\s*\n\s*\n/g, '\n\n')
   .replace(/\(\s+/g, '(')
-  .replace(/\s+\)/g, ')');
+  .replace(/\s+\)/g, ')')
+  // Fix any remaining MySQL-specific syntax
+  .replace(/current_timestamp\(\)/gi, 'CURRENT_TIMESTAMP')
+  .replace(/now\(\)/gi, 'datetime(\'now\')');
 
 fs.writeFileSync(outputFile, output);
 
