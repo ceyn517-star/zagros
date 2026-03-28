@@ -28,12 +28,12 @@ content = content
   // Remove MySQL index statements
   .replace(/,\s*UNIQUE\s+KEY\s+"[^"]+"\s*\([^)]+\)/gi, '')
   .replace(/,\s*KEY\s+"[^"]+"\s*\([^)]+\)/gi, '')
-  // Convert MySQL data types to SQLite
-  .replace(/int\(\d+\)/gi, 'INTEGER')
+  // Convert MySQL data types to SQLite - ORDER MATTERS!
   .replace(/tinyint\(\d+\)/gi, 'INTEGER')
-  .replace(/bigint\(\d+\)/gi, 'INTEGER')
   .replace(/smallint\(\d+\)/gi, 'INTEGER')
   .replace(/mediumint\(\d+\)/gi, 'INTEGER')
+  .replace(/bigint\(\d+\)/gi, 'INTEGER')
+  .replace(/int\(\d+\)/gi, 'INTEGER')
   .replace(/varchar\(\d+\)/gi, 'TEXT')
   .replace(/char\(\d+\)/gi, 'TEXT')
   .replace(/longtext/gi, 'TEXT')
@@ -93,9 +93,19 @@ output = output
   .replace(/\n\s*\n\s*\n/g, '\n\n')
   .replace(/\(\s+/g, '(')
   .replace(/\s+\)/g, ')')
+  // Fix double closing parentheses
+  .replace(/\)\)/g, ')')
   // Fix any remaining MySQL-specific syntax
   .replace(/current_timestamp\(\)/gi, 'CURRENT_TIMESTAMP')
-  .replace(/now\(\)/gi, 'datetime(\'now\')');
+  .replace(/current_TEXT\(\)/gi, 'CURRENT_TIMESTAMP')
+  .replace(/now\(\)/gi, 'datetime(\'now\')')
+  // Fix any remaining tiny/small/medium/big int without parentheses
+  .replace(/\btinyint\b/gi, 'INTEGER')
+  .replace(/\bsmallint\b/gi, 'INTEGER')
+  .replace(/\bmediumint\b/gi, 'INTEGER')
+  .replace(/\bbigint\b/gi, 'INTEGER')
+  // Remove trailing commas before closing parenthesis in CREATE TABLE
+  .replace(/,\s*\)/g, ')');
 
 fs.writeFileSync(outputFile, output);
 
